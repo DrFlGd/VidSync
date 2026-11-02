@@ -477,7 +477,9 @@ try:
         page.click("#choose-move")
         wait_for(lambda: (moved / "_library/library.json").is_file() and not lib.exists(), "Move takes every file to the new folder and leaves none behind", 60)
         wait_for(lambda: str(moved) in api("app_info").get("library", {}).get("path", ""), "the moved library is the one open")
-        check(page.evaluate("location.hash") == "#/activity", "the move is followed in Activity")
+        # on the same drive the move is a rename, done before the page hears back from library_move
+        wait_for(lambda: page.evaluate("location.hash") == "#/activity", "the move is followed in Activity")
+        page.wait_for_selector("#job-now")
         page.goto(BASE + "/#/settings")
         wait_for(lambda: "Moved" in page.inner_text("#library-path"), "Settings shows where it went")
         check(any(f["job"]["type"] == "move" and f["ok"] for f in recent()), "Activity records the move")
