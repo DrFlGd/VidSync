@@ -172,6 +172,7 @@ try:
         browser = p.chromium.launch(executable_path=a.chromium, args=["--no-sandbox"]) if a.chromium else p.chromium.launch()
         page = browser.new_page(viewport={"width": 1400, "height": 880})
         page.add_init_script((ROOT / "tests/tauri_shim.js").read_text())
+        page.on("pageerror", lambda e: print(f"page error: {e}", flush=True))
         page.goto(BASE + "/")
         page.wait_for_selector(".empty-state")
         check(page.is_visible("text=Add your first channel"), "an empty library offers to add a channel")
@@ -620,6 +621,68 @@ try:
         wait_for(lambda: page.locator(".saved-views").count() == 0 and not api("prefs_get").get("views"), "a saved view can be forgotten")
         page.click(".cmdbar .chip")
         page.fill("#search", "")
+
+        # ---- downloads side by side -------------------------------------------------------------------
+        page.goto(BASE + "/#/settings")
+        page.wait_for_selector("#parallel")
+        page.select_option("#parallel", "3")
+        wait_for(lambda: api("settings_get")["parallel"] == 3, "Settings can download a few videos at once")
+        batch = [f"wrk000000{n}" for n in (10, 11, 12, 13)]
+        for i, vid in enumerate(batch):
+            put("videos", vid, {"title": f"Session {i + 1}", "duration": 600, "upload_date": f"2026032{i}", "delay": 4})
+        edit("channels", "@Workshop", lambda d: d["tabs"]["videos"].__setitem__(slice(0, 0), list(reversed(batch))))
+        api("check", {"id": WORK})
+        page.goto(BASE + "/#/activity")
+        page.reload()  # started behind the page's back, so look now rather than at the next idle poll
+        wait_for(lambda: page.locator("#side-by-side li").count() >= 2, "a check downloads several videos side by side, each shown in Activity", 30, detail=lambda: page.inner_text("#job-now"))
+        page.screenshot(path=str(a.out / "12i-side-by-side.png"))
+        wait_for(lambda: idle() and all(v in kept("@Workshop") for v in batch), "and every one of them arrives", 60)
+        api("settings_set", {"parallel": 1})
+
+        # ---- downloading a video again in another quality ---------------------------------------------
+        api("videos_tag", {"items": [{"channel": "@Workshop", "video": "wrk00000008"}], "add": ["favourite"]})
+        api("video_progress", {"channel": "@Workshop", "video": "wrk00000008", "position": 300})
+        page.goto(BASE + "/#/video/@Workshop/wrk00000008")
+        page.wait_for_selector("#video-more")
+        page.click("#video-more")
+        page.click("#redownload")
+        page.wait_for_selector("#choose-720p")
+        page.click("#choose-720p")
+        wait_for(lambda: idle() and vjson("@Workshop", "wrk00000008")["quality"] == "720p", "a video can be downloaded again in another quality", 40)
+        v8 = vjson("@Workshop", "wrk00000008")
+        check(v8["tags"] == ["favourite"] and v8["position"] == 300, f"its tags and where you stopped carry over {v8['tags']} {v8['position']}")
+        dirs8 = [d.name for d in (lib / WORK / "videos").iterdir() if "wrk00000008" in d.name]
+        check(len(dirs8) == 1 and not dirs8[0].endswith("_"), f"the old copy is gone and the new one has its folder name {dirs8}")
+        last_dl = next(c for c in reversed(ytdlp_calls()) if "--progress-template" in c)
+        check(any("res:720" in x for x in last_dl), "yt-dlp is asked for the new quality")
+
+        # ---- bringing in videos downloaded elsewhere -----------------------------------------------------
+        old = home / "old-downloads"
+        (old / "talks").mkdir(parents=True)
+        sample = fx / "sample.webm" if (fx / "sample.webm").is_file() else None
+        (old / "talks" / "Old talk [imp00000001].webm").write_bytes(sample.read_bytes() if sample else b"\x1aE\xdf\xa3" + bytes(3000))
+        (old / "talks" / "Old talk [imp00000001].info.json").write_text(json.dumps({"id": "imp00000001", "title": "Old talk", "channel_id": "UC_work_0000000000000000", "channel": "Workshop Talks", "uploader_id": "@Workshop", "upload_date": "20250505", "duration": 2, "ext": "webm"}), encoding="utf-8")
+        (old / "talks" / "Old talk [imp00000001].jpg").write_bytes((fx / "thumb.png").read_bytes())
+        (old / "Mystery [imp00000002].mp4").write_bytes(b"\x00\x00\x00\x1cftypisom" + bytes(4000))
+        put("videos", "imp00000002", {"title": "Mystery clip", "duration": 30, "upload_date": "20250606", "channel": "@Workshop"})
+        (old / "Copy of opening [wrk00000001].mp4").write_bytes(b"\x00\x00\x00\x1cftypisom" + bytes(500))
+        (old / "holiday.mp4").write_bytes(b"\x00" * 100)
+        post("/test/pick", {"path": str(old)})
+        page.goto(BASE + "/#/settings")
+        page.wait_for_selector("#import")
+        page.click("#import")
+        page.wait_for_selector("#choose-move")
+        body = page.inner_text(".dialog")
+        check("2 videos" in body and "1 video it has already" in body and "1 video came without" in body, f"Import says what it found: {body[:300]!r}")
+        page.screenshot(path=str(a.out / "12j-import.png"))
+        page.click("#choose-move")
+        wait_for(lambda: idle() and "imp00000001" in kept("@Workshop") and "imp00000002" in kept("@Workshop"), "the videos are brought into their channel", 40)
+        check(not (old / "talks" / "Old talk [imp00000001].webm").exists() and not (old / "Mystery [imp00000002].mp4").exists(), "moved, not copied, as asked")
+        check((old / "Copy of opening [wrk00000001].mp4").exists() and (old / "holiday.mp4").exists(), "what the library has already, and files without an id, are left where they are")
+        d2 = next(d for d in (lib / WORK / "videos").iterdir() if "imp00000002" in d.name)
+        check(any(f.name.endswith(".info.json") for f in d2.iterdir()), "a video without its details gets them from YouTube")
+        check(vjson("@Workshop", "imp00000001")["title"] == "Old talk" and vjson("@Workshop", "imp00000001")["thumbnail"].endswith(".jpg"), "with its picture and details")
+        check(any(f["job"]["type"] == "import" and "Moved 2 videos" in f["message"] for f in recent()), "Activity says what was brought in")
 
         # ---- deleting a video, removing sources -------------------------------------------------
         page.goto(BASE + "/#/video/@Demo/vid00000002")

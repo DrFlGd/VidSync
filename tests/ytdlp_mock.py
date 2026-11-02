@@ -14,7 +14,8 @@ without YouTube. Vid Sync runs it when VIDSYNC_YTDLP points at this file.
                                     "break_once": true (the first download is cut off half way, leaving a .part file;
                                                         the next one carries on and says where from in its .info.json),
                                     "cues": [[start, end, "text"], ...] (the subtitles written with --write-subs),
-                                    "comments": [{"author", "text", "like_count", ...}] (written with --write-comments)}
+                                    "comments": [{"author", "text", "like_count", ...}] (written with --write-comments),
+                                    "delay": seconds a download of it takes}
 <folder>/sample.webm or sample.mp4 the file every download gets (a few bytes are written when neither is there)
 
 A test edits these files to simulate a change upstream. It answers what Vid Sync
@@ -214,7 +215,7 @@ else:
     info["ext"] = ext
     if ext == "webm":
         info["vcodec"], info["acodec"] = "vp8", "opus"
-delay = float(os.environ.get("VIDSYNC_MOCK_DELAY", "0.3"))
+delay = float(v.get("delay") or os.environ.get("VIDSYNC_MOCK_DELAY", "0.3"))
 print(f"[info] {vid}: Downloading 1 format(s): 137+140", flush=True)
 print(f"[download] Destination: {media}", flush=True)
 total = len(data)
