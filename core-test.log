@@ -1,0 +1,40 @@
+   Compiling vidsync-core v0.5.0 (D:\a\VidSync\VidSync\desktop\core)
+    Finished `release` profile [optimized] target(s) in 8.79s
+     Running unittests src\lib.rs (target\release\deps\vidsync_core-cabb79b2f96dbc53.exe)
+
+running 20 tests
+test api::tests::link_labels_and_tags ... ok
+test api::tests::notices_for_new_videos_and_what_needs_you ... ok
+test capture::prune_tests::playing_near_the_end_counts_as_watched ... ok
+test capture::prune_tests::the_newest_stay_and_old_watched_ones_go ... ok
+test capture::tests::a_channel_is_read_from_a_listing ... ok
+test capture::tests::merging_marks_new_videos_by_the_mode ... ok
+test library::tests::audit_counts_each_state ... ok
+test sources::tests::reads_the_shapes_youtube_hands_out ... ok
+test textsearch::tests::phrases_are_found_across_lines_and_in_the_description ... ok
+test textsearch::tests::subtitles_are_read_once_per_line ... ok
+test import::tests::ids_are_read_from_names_and_files_grouped ... ok
+test util::range_tests::ranges_are_read ... ok
+test library::tests::format_1_records_move_to_each_video_folder ... ok
+test util::tests::move_tree_moves_everything ... ok
+test util::tests::names_are_safe_everywhere ... ok
+test util::tests::times_round_trip ... ok
+test ytdlp::tests::errors_are_explained ... ok
+test library::tests::library_round_trip_keeps_unknown_keys ... ok
+test ytdlp::tests::formats_follow_the_quality ... ok
+test util::range_tests::only_the_part_asked_for_is_read ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src\bin\vidsync-cli.rs (target\release\deps\vidsync_cli-33e27c6fee81bfe5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vidsync_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

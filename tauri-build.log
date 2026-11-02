@@ -1,0 +1,105 @@
+        Info Looking up installed tauri packages to check mismatched versions...
+ Downloading crates ...
+  Downloaded auto-launch v0.6.0
+  Downloaded chacha20 v0.10.2
+  Downloaded cpufeatures v0.3.1
+  Downloaded notify-rust v4.18.2
+  Downloaded os_info v3.15.0
+  Downloaded rand v0.10.3
+  Downloaded rand_core v0.10.1
+  Downloaded tauri-plugin-autostart v2.7.0
+  Downloaded tauri-plugin-notification v2.8.0
+  Downloaded tauri-plugin-single-instance v2.5.5
+  Downloaded tauri-winrt-notification v0.8.1
+  Downloaded windows-registry v0.6.1
+   Compiling syn v2.0.119
+   Compiling windows-sys v0.61.2
+   Compiling windows-result v0.4.1
+   Compiling time-macros v0.2.32
+   Compiling deranged v0.5.9
+   Compiling tracing-core v0.1.36
+   Compiling time v0.3.55
+   Compiling tray-icon v0.25.1
+   Compiling serde_derive_internals v0.29.1
+   Compiling getrandom v0.4.3
+   Compiling rand_core v0.10.1
+   Compiling cpufeatures v0.3.1
+   Compiling chacha20 v0.10.2
+   Compiling plist v1.10.3
+   Compiling phf_macros v0.13.1
+   Compiling phf v0.13.1
+   Compiling web_atoms v0.2.6
+   Compiling derive_more-impl v2.1.1
+   Compiling markup5ever v0.39.0
+   Compiling cssparser v0.37.0
+   Compiling html5ever v0.39.0
+   Compiling schemars_derive v0.8.22
+   Compiling derive_more v2.1.1
+   Compiling windows-interface v0.59.3
+   Compiling selectors v0.38.0
+   Compiling windows-implement v0.60.2
+   Compiling winapi-util v0.1.11
+   Compiling schemars v0.8.22
+   Compiling windows-core v0.62.2
+   Compiling same-file v1.0.6
+   Compiling webview2-com-macros v0.8.1
+   Compiling dom_query v0.28.0
+   Compiling windows-future v0.3.2
+   Compiling windows-numerics v0.3.1
+   Compiling windows-collections v0.3.2
+   Compiling tauri-utils v2.10.2
+   Compiling windows v0.62.2
+   Compiling walkdir v2.5.0
+   Compiling tracing-attributes v0.1.31
+   Compiling cookie v0.18.2
+   Compiling tracing v0.1.44
+   Compiling softbuffer v0.4.8
+   Compiling mio v1.2.4
+   Compiling tauri-build v2.7.4
+   Compiling tauri-plugin v2.7.2
+   Compiling tauri-codegen v2.7.4
+   Compiling dirs-sys v0.5.0
+   Compiling muda v0.20.0
+   Compiling tauri v2.12.5
+   Compiling socket2 v0.6.5
+   Compiling serialize-to-javascript-impl v0.1.2
+   Compiling serialize-to-javascript v0.1.2
+   Compiling tokio v1.54.1
+   Compiling tauri-macros v2.7.4
+   Compiling dirs v7.0.0
+   Compiling window-vibrancy v0.8.1
+   Compiling tauri-plugin-fs v2.7.1
+   Compiling tauri-plugin-autostart v2.7.0
+   Compiling tauri-plugin-dialog v2.8.4
+   Compiling tauri-plugin-opener v2.7.2
+   Compiling tauri-plugin-notification v2.8.0
+   Compiling os_info v3.15.0
+   Compiling windows-registry v0.6.1
+   Compiling auto-launch v0.6.0
+   Compiling rand v0.10.3
+   Compiling rfd v0.17.2
+   Compiling vid-sync v0.5.0 (D:\a\VidSync\VidSync\desktop\src-tauri)
+   Compiling vidsync-core v0.5.0 (D:\a\VidSync\VidSync\desktop\core)
+   Compiling webview2-com-sys v0.39.1
+   Compiling tao v0.37.2
+   Compiling webview2-com v0.39.1
+   Compiling tauri-winrt-notification v0.8.1
+   Compiling wry v0.57.1
+   Compiling tauri-runtime v2.12.2
+   Compiling tauri-runtime-wry v2.12.3
+   Compiling notify-rust v4.18.2
+   Compiling tauri-plugin-single-instance v2.5.5
+    Finished `release` profile [optimized] target(s) in 2m 57s
+       Built application at: D:\a\VidSync\VidSync\desktop\target\release\vid-sync.exe
+        Info Patching D:\a\VidSync\VidSync\desktop\target\release\vid-sync.exe with bundle type information: nsis
+        Info Verifying NSIS package
+ Downloading https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip
+        Info validating hash
+        Info extracting NSIS
+ Downloading https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll
+        Info validating hash
+        Info Target: x64
+     Running makensis to produce D:\a\VidSync\VidSync\desktop\target\release\bundle\nsis\Vid Sync_0.5.0_x64-setup.exe
+    Finished 1 bundle at:
+        D:\a\VidSync\VidSync\desktop\target\release\bundle\nsis\Vid Sync_0.5.0_x64-setup.exe (25.92 MiB)
+

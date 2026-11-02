@@ -1,0 +1,5 @@
+total 30740
+drwxr-xr-x 1 runneradmin 197121        0 Nov  2 14:07 .
+drwxr-xr-x 1 runneradmin 197121        0 Nov  2 14:07 ..
+-rwxr-xr-x 1 runneradmin 197121 27176986 Nov  2 14:07 Vid Sync_0.5.0_x64-setup.exe
+-rwxr-xr-x 1 runneradmin 197121  4291072 Nov  2 14:07 vidsync-cli-0.5.0-windows-x64.exe

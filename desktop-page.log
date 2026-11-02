@@ -1,0 +1,216 @@
+ok   an empty library offers to add a channel
+ok   the Add dialog reads each link
+ok   a line that isn't a link is pointed out
+ok   channels and playlists each get their follow settings
+ok   channels follow new videos, playlists take every video
+ok   three links can be added
+ok   the channel and the playlist appear as sources
+ok   the adds finish
+ok   a channel that doesn't exist leaves no folder behind
+ok   the channel and the playlist each have a folder with their JSON
+ok   the channel is followed for new videos
+ok   what the channel had already is listed as not wanted
+ok   the playlist's videos were downloaded into the channel's folder
+ok   each video has a dated folder ['2026-01-01 First video [vid00000001]', '2026-01-03 Third video [vid00000003]']
+ok   each video's folder has its own video.json {'acodec': 'opus', 'bytes': 38769, 'downloaded': '2026-11-02T14:02:25Z', 'duration': 60.0, 'ext': 'webm', 'file': 'First video [vid00000001].webm', 'height': 720, 'id': 'vid00000001', 'info': 'First video [vid00000001].info.json', 'played': '', 'position': 0.0, 'quality': 'best', 'subtitles': [], 'tags': [], 'thumbnail': 'First video [vid00000001].jpg', 'title': 'First video', 'upload_date': '2026-01-01', 'vcodec': 'vp8', 'view_count': 10, 'watched': False, 'watched_at': '', 'width': 1280}
+ok   channel.json holds no video records (they're in each folder)
+ok   the media, info and thumbnail are kept together ['.jpg', '.json', '.json', '.webm']
+ok   nothing is left in the partial folder
+ok   the playlist keeps its order
+ok   Activity lists each finished job
+ok   Activity says why a channel couldn't be added
+ok   Activity counts what the playlist downloaded: "just now\nAdding\n@Nope\nThat doesn't exist on YouTube (404): check the link\njust now\nAdding\nplaylist PLdemo000000000000\nAdded: Favourites, downloaded 2 videos\njust now\nAdding\n@Demo\nAdded: Demo Channel"
+ok   the videos page has a card per video
+ok   a card shows the title and the channel
+ok   the thumbnail loads from the library folder
+ok   search finds words in titles
+ok   clearing the search shows everything
+ok   the list view has a row per video
+ok   the menu lists channels and playlists
+ok   a playlist filters the videos
+ok   the channel's page shows its name
+ok   the inspector shows how the channel is followed
+ok   details show Added
+ok   details show Last checked
+ok   details show Kept
+ok   details show Upstream
+ok   details show Subscribers
+ok   details show Next check
+ok   the Audit tab lists what the channel has upstream
+ok   listed videos are marked kept or not wanted
+ok   a not-wanted video can be fetched from the audit
+ok   the audit shows it as kept
+ok   a video can be skipped on purpose
+ok   the audit shows it as skipped
+ok   Check now downloads the channel's new video
+ok   the check finishes
+ok   the new video was wanted
+ok   the audit lists the new video
+ok   and shows it as kept
+ok   a check with nothing new says it's up to date
+ok   nothing is downloaded twice
+ok   the second channel is added and its videos fetched
+ok   every video that could be downloaded was ['liv00000001', 'wrk00000001']
+ok   a members-only video is marked failed with the reason
+ok   live streams are listed from their tab
+ok   the channel's avatar is saved
+ok   the audit shows the failed video
+ok   with yt-dlp's reason
+ok   the channel's page offers to download what's missing
+ok   a failed video can be skipped
+ok   then nothing is missing
+ok   Sources lists both channels and the playlist
+ok   a channel card shows its avatar
+ok   a card carries the audit's counts
+ok   a source card's name runs across the card, not down it (card 369px, name 283x21px)
+ok   a source card's counts sit in a row (337x22px)
+ok   @Demo is given a creator
+ok   @Workshop is given a creator
+ok   a tag is saved on the channel
+ok   the menu lists creators
+ok   a creator filters to every channel's videos
+ok   a tag filters the videos
+ok   search and a filter work together
+ok   Sources groups channels by creator
+ok   a creator's page lists their channels
+ok   and one feed of all their videos, newest first
+ok   the newest video comes first ['vid00000005', 'liv00000001', 'wrk00000001', 'vid00000003', 'vid00000002', 'vid00000001']
+ok   the Audit page has a row per source
+ok   with the source's name
+ok   and a total
+ok   the audit says nothing is missing
+ok   a check from the audit page fetches the new video
+ok   a download cut off part way is marked failed
+ok   with why: "YouTube couldn't be reached"
+ok   what it got so far is kept for the next try
+ok   yt-dlp is asked to keep .part files and carry them on
+ok   the next try finishes it
+ok   carrying on from where it stopped, not from the start
+ok   and nothing of the try is left behind
+ok   the video's page has a player
+ok   the video's page shows its title
+ok   chapters are listed
+ok   the crumbs lead back to the channel
+ok   the video's details show Channel
+ok   the video's details show Creator
+ok   the video's details show Published
+ok   the video's details show Downloaded
+ok   the video's details show On disk
+ok   with the creator
+ok   the player plays the file from the library folder /library/youtube.com/channels/%40Workshop/videos/2026-02-01%20Opening%20talk%20%5Bwrk00000001%5D/Opening%20talk%20%5Bwrk00000001%5D.webm
+ok   the player reads the video's length
+ok   the library serves byte ranges, so the player can seek
+ok   an open-ended range is answered with a part, not the whole file at once
+ok   a tag is saved on the video
+ok   Open in player hands the file to the system
+ok   where playing stopped is saved in the video's video.json
+ok   Continue watching shows a video started and not finished
+ok   its card shows how far it was watched
+ok   a video can be marked watched (it starts from the beginning next time)
+ok   the button says so
+ok   a watched video leaves Continue watching
+ok   its card is marked watched
+ok   the menu filters to what's not watched yet
+ok   the player is ready
+ok   playing to the end marks a video watched
+ok   the schedule fetches a new video by itself
+ok   scheduled checks finish
+ok   Activity records scheduled checks
+ok   a scheduled check that brings new videos shows a notice [{'title': 'Demo Channel: 1 new video', 'text': 'Sixth video'}]
+ok   Settings shows how often sources are checked
+ok   Settings shows the yt-dlp that was found and its version
+ok   by default Vid Sync keeps checking from the tray and shows notices
+ok   starting at sign-in is off until asked for
+ok   it can be turned on from Settings
+ok   closing the window can be made to quit
+ok   and back
+ok   downloads pause a few seconds between them by default
+ok   the pause and a speed limit are saved
+ok   cookies are picked from a list of browsers
+ok   Test says when a browser's cookies can't be read, and what to do 'Chrome and Edge lock their cookies on Windows: use Firefox, or a cookies file'
+ok   another browser can be picked
+ok   Test says when YouTube answers with the cookies
+ok   the test reads an age-restricted video with the browser's cookies
+ok   a channel's follow settings are saved
+ok   the next check lists the shorts tab too
+ok   a video on a newly followed tab counts as new and is fetched
+ok   the quality asked for is passed to yt-dlp
+ok   with the pause and the speed limit from Settings
+ok   and the cookies
+ok   a channel can keep only its newest videos
+ok   or delete what's been watched after a while
+ok   the check fetches what's new
+ok   only the newest two stay, and the tagged one: ['wrk00000001', 'wrk00000005', 'wrk00000006'] (was ['liv00000001', 'wrk00000001', 'wrk00000003', 'wrk00000004'])
+ok   the audit still lists what was deleted, and why: {'availability': 'public', 'channel': 'Workshop Talks', 'channel_id': 'UC_work_0000000000000000', 'duration': 600.0, 'error': 'Deleted: only the newest 2 are kept', 'first_seen': '2026-11-02T14:02:35Z', 'gone': False, 'id': 'wrk00000003', 'last_seen': '2026-11-02T14:02:45Z', 'last_try': '', 'live': '', 'state': 'not-wanted', 'tab': 'videos', 'title': 'Closing talk', 'tries': 0, 'upload_date': '', 'uploader_id': '@Workshop', 'view_count': 0}
+ok   an older video isn't downloaded only to be deleted
+ok   Activity says what was deleted: "3 videos newly listed, downloaded 2 videos, deleted 3 older or watched videos as the channel's settings ask"
+ok   Ctrl and click chooses videos instead of opening them
+ok   and stays on the page
+ok   a tag is added to every chosen video
+ok   the chosen videos can be marked watched together
+ok   Esc lets go of them
+ok   Shift and click chooses a run of videos
+ok   a tag can be taken off them together
+ok   the chosen videos can be deleted together
+ok   and nothing stays chosen
+ok   a video is downloaded with its subtitles and comments
+ok   yt-dlp is asked for the top 200 comments
+ok   the video's page shows the saved comments
+ok   a search finds what's said in a video's subtitles, across two lines
+ok   with the moment it's said: '0:01 today we will build a canoe from scratch'
+ok   once, though it runs over two lines
+ok   the moment opens the video there
+ok   and the player starts from that second
+ok   a search finds words in descriptions too
+ok   clearing the search clears them
+ok   the view can be saved to the menu
+ok   with its filter and search, on this computer
+ok   the menu's filter can be cleared
+ok   a saved view brings back its filter and search
+ok   a saved view can be forgotten
+ok   Settings can download a few videos at once
+ok   a check downloads several videos side by side, each shown in Activity
+ok   and every one of them arrives
+ok   a video can be downloaded again in another quality
+ok   its tags and where you stopped carry over ['favourite'] 300.0
+ok   the old copy is gone and the new one has its folder name ['2026-03-17 Workshop day [wrk00000008]']
+ok   yt-dlp is asked for the new quality
+ok   Import says what it found: "Bring in 2 videos?\n\nD:\\a\\_temp\\pagehome\\old-downloads holds 2 videos (41 KB) the library hasn't got, such as “Mystery”, “Old talk”, and 1 video it has already (left alone). Each goes into its channel's folder with its picture, subtitles and details. 1 video came without its .info.json, so YouTube is"
+ok   the videos are brought into their channel
+ok   moved, not copied, as asked
+ok   what the library has already, and files without an id, are left where they are
+ok   a video without its details gets them from YouTube
+ok   with its picture and details
+ok   Activity says what was brought in
+ok   a video can be deleted
+ok   its folder is gone
+ok   it's still listed upstream, as not wanted
+ok   a playlist can be removed
+ok   removing a playlist keeps its videos in their channels
+ok   removing a channel says its videos go too
+ok   a channel and its videos can be removed
+ok   Sources shows what's left
+ok   changing the folder asks whether to move the library there or start a new one
+ok   a new library folder is set up
+ok   Settings shows the new folder
+ok   the new library is empty
+ok   the first library opens again with its videos
+ok   picking an existing library opens it without asking
+ok   the question says what the library holds: 'Move the library there?\n\nThe library at D:\\a\\_temp\\pagehome\\Library holds 1 source and 5 videos. Move all of its files to D:\\a\\_temp\\pagehome\\Moved\\Videos, or start a new, empty library there and leav'
+ok   Move takes every file to the new folder and leaves none behind
+ok   the moved library is the one open
+ok   the move is followed in Activity
+ok   Settings shows where it went
+ok   Activity records the move
+ok   the moved library shows its videos
+ok   and their pictures load from the new place
+ok   a bot check pauses scheduled checks
+ok   and the run stops there instead of asking again for every video
+ok   a notice says something needs you [{'title': 'Demo Channel needs you', 'text': 'Guarded video: YouTube asks for a sign-in: add cookies in Settings'}]
+ok   Activity says why checks wait, and until when
+ok   scheduled checks can be turned back on
+ok   the theme can be dark
+ok   a narrow window doesn't scroll sideways
+ok   no errors in the page []
+
+all passed
