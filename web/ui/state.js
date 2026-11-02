@@ -97,8 +97,8 @@ export async function loadJobs() {
     if (key !== lastFinished || prevBusy !== busy(j) || busy(j)) {
       if (lastFinished !== undefined && key !== lastFinished && newest) {
         announce(newest);
-        // the library may be somewhere else now
-        if (newest.job.type === "move") { try { ui.set({ info: { ...(await platform.refreshInfo()) }, filter: null }); } catch { /* keep */ } }
+        // the library may be somewhere else now, or checks paused after YouTube's bot check
+        try { ui.set({ info: { ...(await platform.refreshInfo()) }, ...(newest.job.type === "move" ? { filter: null } : {}) }); } catch { /* keep */ }
       }
       lastFinished = key;
       await reloadAll();

@@ -360,6 +360,41 @@ pub fn byte_range(header: &str, total: u64) -> Option<(u64, u64)> {
     (start <= end && start < total).then_some((start, end))
 }
 
+/// The most an open-ended range ("bytes=N-") is answered with: the player asks
+/// again for the rest, so a seek never reads a whole video into memory.
+pub const RANGE_CHUNK: u64 = 8 << 20;
+
+/// What to answer a request for a file: the status (200 or 206), the
+/// Content-Range when it's a part, the file's size and the bytes. Only the part
+/// asked for is read from disk.
+pub struct FilePart {
+    pub status: u16,
+    pub content_range: Option<String>,
+    pub total: u64,
+    pub body: Vec<u8>,
+}
+
+pub fn read_file_part(path: &Path, range: Option<&str>) -> std::io::Result<FilePart> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let total = f.metadata()?.len();
+    let open_ended = range.is_some_and(|r| r.trim().ends_with('-'));
+    match range.and_then(|r| byte_range(r, total)) {
+        Some((start, end)) => {
+            let end = if open_ended { end.min(start + RANGE_CHUNK - 1) } else { end };
+            f.seek(SeekFrom::Start(start))?;
+            let mut body = Vec::with_capacity((end - start + 1) as usize);
+            f.take(end - start + 1).read_to_end(&mut body)?;
+            Ok(FilePart { status: 206, content_range: Some(format!("bytes {start}-{end}/{total}")), total, body })
+        }
+        None => {
+            let mut body = Vec::with_capacity(total as usize);
+            f.read_to_end(&mut body)?;
+            Ok(FilePart { status: 200, content_range: None, total, body })
+        }
+    }
+}
+
 #[cfg(test)]
 mod range_tests {
     use super::*;
@@ -372,5 +407,24 @@ mod range_tests {
         assert_eq!(byte_range("bytes=0-5000", 1000), Some((0, 999)));
         assert_eq!(byte_range("bytes=1000-", 1000), None);
         assert_eq!(mime("a.MP4"), "video/mp4");
+    }
+
+    #[test]
+    fn only_the_part_asked_for_is_read() {
+        let dir = std::env::temp_dir().join(format!("vs-range-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("v.bin");
+        let data: Vec<u8> = (0..(RANGE_CHUNK + 1000)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&f, &data).unwrap();
+        let p = read_file_part(&f, Some("bytes=10-19")).unwrap();
+        assert_eq!((p.status, p.body.as_slice()), (206, &data[10..20]));
+        let p = read_file_part(&f, Some("bytes=0-")).unwrap();
+        assert_eq!(p.body.len() as u64, RANGE_CHUNK);
+        assert_eq!(p.content_range.as_deref(), Some(format!("bytes 0-{}/{}", RANGE_CHUNK - 1, data.len()).as_str()));
+        let p = read_file_part(&f, Some("bytes=-100")).unwrap();
+        assert_eq!(p.body.as_slice(), &data[data.len() - 100..]);
+        let p = read_file_part(&f, None).unwrap();
+        assert_eq!((p.status, p.body.len()), (200, data.len()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -3,7 +3,7 @@
 //! into a folder, with progress and Stop. yt-dlp is a program beside the app
 //! (tools.rs finds it), never linked in, so it can be updated by itself.
 
-use crate::config::Cookies;
+use crate::config::{Cookies, Polite};
 use crate::http::Progress;
 use crate::library::Quality;
 use anyhow::{bail, Context, Result};
@@ -26,7 +26,16 @@ pub struct YtDlp {
     pub exe: PathBuf,
     pub ffmpeg: Option<PathBuf>,
     pub cookies: Cookies,
+    pub polite: Polite,
 }
+
+/// A video YouTube shows only to a signed-in adult, for Settings → Cookies → Test
+/// (the age-gated trailer yt-dlp's own tests use).
+pub const COOKIE_TEST_VIDEO: &str = "HtVdAasjOgU";
+
+/// What explain() says when YouTube wants a sign-in to go on at all: the
+/// schedule pauses for a while when a job meets it.
+pub const BOT_CHECK: &str = "YouTube asks for a sign-in: add cookies in Settings";
 
 /// What a flat listing gave: the source's own details and its entries.
 #[derive(Debug, Default)]
@@ -71,14 +80,24 @@ pub fn explain(stderr: &str) -> String {
     let errors: Vec<&str> = stderr.lines().filter(|l| l.starts_with("ERROR:")).collect();
     let text = errors.join("\n");
     let t = text.to_lowercase();
-    let reason = if t.contains("members-only") || t.contains("join this channel") || t.contains("members only") {
+    let reason = if t.contains("could not copy") && t.contains("cookie database") {
+        "The browser holds its cookies while it's open: close it and try again, or use Firefox"
+    } else if t.contains("dpapi") || t.contains("app-bound") || t.contains("failed to decrypt") {
+        "Chrome and Edge lock their cookies on Windows: use Firefox, or a cookies file"
+    } else if (t.contains("could not find") || t.contains("couldn't find")) && t.contains("cookies database") {
+        "That browser has no cookies on this computer: is it installed and signed in to YouTube?"
+    } else if t.contains("unsupported browser") {
+        "yt-dlp can't read that browser's cookies"
+    } else if t.contains("cookies") && (t.contains("does not look like a netscape format") || t.contains("no such file")) {
+        "The cookies file can't be read: export it again in Netscape (cookies.txt) format"
+    } else if t.contains("members-only") || t.contains("join this channel") || t.contains("members only") {
         "Members only"
     } else if t.contains("private video") || t.contains("this video is private") {
         "Private video"
     } else if t.contains("confirm your age") || t.contains("age-restricted") || t.contains("inappropriate for some users") {
         "Age restricted: add cookies in Settings to download it"
     } else if t.contains("not a bot") || t.contains("sign in to confirm") {
-        "YouTube asks for a sign-in: add cookies in Settings"
+        BOT_CHECK
     } else if t.contains("premieres in") || t.contains("live event will begin") || t.contains("is not yet available") {
         "Not started yet"
     } else if t.contains("video unavailable") || t.contains("has been removed") || t.contains("no longer available") || t.contains("account associated with this video has been terminated") {
@@ -122,6 +141,9 @@ impl YtDlp {
                 c.arg("--cookies").arg(&self.cookies.file);
             }
             _ => {}
+        }
+        if self.polite.sleep_requests > 0.0 {
+            c.arg("--sleep-requests").arg(fmt_secs(self.polite.sleep_requests));
         }
         c
     }
@@ -240,13 +262,20 @@ impl YtDlp {
         a
     }
 
-    /// Download one video into `dest` (an empty folder): the media file, its
-    /// `.info.json`, its picture and subtitles when asked. Progress goes to
-    /// `progress`, the step to `stage`.
+    /// Download one video into `dest`: the media file, its `.info.json`, its
+    /// picture and subtitles when asked. Progress goes to `progress`, the step to
+    /// `stage`. A `.part` file left in `dest` by a try that was cut off is
+    /// carried on from where it stopped.
     pub fn download(&self, url: &str, dest: &Path, quality: Quality, subtitles: &str, progress: &Progress, stage: &Stage) -> Result<()> {
         std::fs::create_dir_all(dest)?;
         let mut cmd = self.base();
-        cmd.args(["--no-playlist", "--newline", "--progress", "--no-part", "--retries", "3", "--fragment-retries", "5"]);
+        cmd.args(["--no-playlist", "--newline", "--progress", "--continue", "--retries", "3", "--fragment-retries", "5"]);
+        if self.polite.sleep_downloads > 0.0 {
+            cmd.arg("--sleep-interval").arg(fmt_secs(self.polite.sleep_downloads));
+        }
+        if self.polite.limit_rate > 0 {
+            cmd.arg("--limit-rate").arg(self.polite.limit_rate.to_string());
+        }
         cmd.args(["--progress-template", "download:VS>%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s"]);
         cmd.args(["--write-info-json", "--no-write-playlist-metafiles", "--write-thumbnail"]);
         if self.ffmpeg.is_some() {
@@ -273,6 +302,10 @@ impl YtDlp {
                 set_stage(stage, "Merging video and audio");
             } else if line.starts_with("[ThumbnailsConvertor]") || line.starts_with("[info] Downloading video thumbnail") {
                 set_stage(stage, "Saving the picture");
+            } else if line.starts_with("[download] Resuming download") {
+                set_stage(stage, "Carrying on where the last try stopped");
+            } else if line.starts_with("[download] Sleeping") {
+                set_stage(stage, "Pausing between downloads");
             } else if line.starts_with("[download] Destination:") && !line.contains("Downloading") {
                 set_stage(stage, "Downloading");
             }
@@ -282,6 +315,12 @@ impl YtDlp {
         }
         Ok(())
     }
+}
+
+/// Seconds for yt-dlp: "3", "0.5".
+fn fmt_secs(s: f64) -> String {
+    let t = format!("{s:.2}");
+    t.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 /// What a download left in its folder: (media file, info.json, picture, subtitles).
@@ -348,13 +387,17 @@ mod tests {
         assert_eq!(explain("ERROR: [youtube:tab] This channel does not have a shorts tab"), "The channel has no such tab");
         assert_eq!(explain("ERROR: [youtube] abcdefghijk: Something odd happened"), "Something odd happened");
         assert_eq!(explain(""), "yt-dlp didn't say why");
+        assert_eq!(explain("ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271"), "The browser holds its cookies while it's open: close it and try again, or use Firefox");
+        assert_eq!(explain("ERROR: Failed to decrypt with DPAPI. See https://github.com/yt-dlp/yt-dlp/issues/10927"), "Chrome and Edge lock their cookies on Windows: use Firefox, or a cookies file");
+        assert_eq!(fmt_secs(3.0), "3");
+        assert_eq!(fmt_secs(0.5), "0.5");
         assert_eq!(date(&serde_json::json!("20261029")), "2026-10-29");
         assert_eq!(date(&serde_json::json!(1_793_244_300)), "2026-10-29");
     }
 
     #[test]
     fn formats_follow_the_quality() {
-        let y = YtDlp { exe: PathBuf::from("yt-dlp"), ffmpeg: Some(PathBuf::from("ffmpeg")), cookies: Cookies::default() };
+        let y = YtDlp { exe: PathBuf::from("yt-dlp"), ffmpeg: Some(PathBuf::from("ffmpeg")), cookies: Cookies::default(), polite: Polite::default() };
         assert_eq!(y.format_args(Quality::P1080).join(" "), "-S res:1080,codec:avc:m4a,ext -f bv*+ba/b --merge-output-format mp4");
         let y = YtDlp { ffmpeg: None, ..y };
         assert_eq!(y.format_args(Quality::Best).join(" "), "-S res,codec:avc:m4a,ext -f b");

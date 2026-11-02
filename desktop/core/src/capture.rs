@@ -8,7 +8,7 @@ use crate::sources::{self, ChannelKey};
 use crate::util::{dir_size, now_iso, now_unix, safe_name, unix_from_iso};
 use crate::ytdlp::{date, num, set_stage, sort_files, text, Listing, Stage, YtDlp};
 use anyhow::{bail, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// What a job did, for Activity.
@@ -261,17 +261,48 @@ pub struct Downloaded {
     pub subtitles: Vec<String>,
 }
 
-/// Download one video into a fresh folder under `partial` and read what came.
+/// What a try at a download was asked for, kept in its `.partial/<id>` folder:
+/// a later try carries on from the files there only when it asks for the same.
+const TRY_FILE: &str = "try.json";
+
+/// How long a download cut off part way is kept for a later try to carry on.
+pub const PARTIAL_KEEP_DAYS: u64 = 7;
+
+/// Remove what downloads left in `.partial/` more than [`PARTIAL_KEEP_DAYS`] ago.
+pub fn clean_partial(partial: &Path) {
+    let keep = std::time::Duration::from_secs(PARTIAL_KEEP_DAYS * 86_400);
+    for e in std::fs::read_dir(partial).into_iter().flatten().flatten() {
+        let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        if age.is_none_or(|a| a > keep) {
+            let p = e.path();
+            let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+        }
+    }
+}
+
+/// Download one video into its folder under `partial` and read what came. A
+/// folder left by an earlier try that was cut off (sleep, a dropped connection,
+/// Stop) is carried on from, when that try asked for the same quality.
 pub fn download(y: &YtDlp, partial: &Path, video_id: &str, follow: &Follow, progress: &Progress, stage: &Stage) -> Result<Downloaded> {
     let dir = partial.join(video_id);
-    let _ = std::fs::remove_dir_all(&dir);
+    let asked = json!({ "quality": follow.quality.key(), "subtitles": follow.subtitles.trim(), "ffmpeg": y.ffmpeg.is_some() });
+    let before: Value = std::fs::read(dir.join(TRY_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    if before.get("quality") != asked.get("quality") || before.get("subtitles") != asked.get("subtitles") || before.get("ffmpeg") != asked.get("ffmpeg") {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     std::fs::create_dir_all(&dir).with_context(|| format!("couldn't make {}", dir.display()))?;
+    std::fs::write(dir.join(TRY_FILE), serde_json::to_vec(&asked)?)?;
     set_stage(stage, "Downloading");
     let res = y.download(&sources::video_url(video_id), &dir, follow.quality, &follow.subtitles, progress, stage);
     if let Err(e) = res {
-        let _ = std::fs::remove_dir_all(&dir);
+        // a half-written file is kept for the next try; otherwise nothing is worth keeping
+        let resumable = std::fs::read_dir(&dir).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part"));
+        if !resumable {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         return Err(e);
     }
+    let _ = std::fs::remove_file(dir.join(TRY_FILE));
     let (media, info_file, picture, subtitles) = sort_files(&dir)?;
     let media = media.context("yt-dlp finished but left no video file")?;
     let info_file = info_file.unwrap_or_default();

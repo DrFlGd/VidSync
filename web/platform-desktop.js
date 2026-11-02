@@ -41,5 +41,8 @@ export async function createPlatform() {
     pickFolder: (title) => invoke("pick_folder", { title }),
     pickFile: (title) => invoke("pick_file", { title }),
     async refreshInfo() { Object.assign(info, await api("app_info")); return info; },
+    // start at sign-in (in the tray): the desktop app's own switch, not a library setting
+    autostartGet: () => invoke("autostart_get"),
+    autostartSet: (on) => invoke("autostart_set", { on }),
   };
 }

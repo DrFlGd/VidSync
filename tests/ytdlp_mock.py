@@ -8,7 +8,11 @@ without YouTube. Vid Sync runs it when VIDSYNC_YTDLP points at this file.
                                     "avatar": "<file in the folder>", "tabs": {"videos": [ids], "shorts": [ids]}}
 <folder>/playlists/<id>.json       {"title", "description", "channel": "<@handle>", "videos": [ids]}
 <folder>/videos/<id>.json          {"title", "duration", "upload_date": "20260101", "channel": "<@handle>",
-                                    "view_count", "description", "live_status", "error": "<yt-dlp's error text>"}
+                                    "view_count", "description", "live_status", "error": "<yt-dlp's error text>",
+                                    "needs_cookies": true (age restricted: only with Firefox's cookies or a cookies file),
+                                    "bot_check": true (YouTube asks to confirm it isn't a bot, unless cookies are given),
+                                    "break_once": true (the first download is cut off half way, leaving a .part file;
+                                                        the next one carries on and says where from in its .info.json)}
 <folder>/sample.webm or sample.mp4 the file every download gets (a few bytes are written when neither is there)
 
 A test edits these files to simulate a change upstream. It answers what Vid Sync
@@ -74,6 +78,19 @@ def channel_by(key):
     return None, None
 
 
+def gate(vid, v):
+    """Fail the way YouTube does for a video that wants a sign-in."""
+    browser, cookie_file = opt("--cookies-from-browser"), opt("--cookies")
+    signed_in = (browser == "firefox") or bool(cookie_file and Path(cookie_file).is_file())
+    if browser in ("chrome", "edge"):
+        sys.stderr.write("ERROR: Failed to decrypt with DPAPI. See  https://github.com/yt-dlp/yt-dlp/issues/10927  for more info\n")
+        sys.exit(1)
+    if v.get("needs_cookies") and not signed_in:
+        fail(f"{vid}: Sign in to confirm your age. This video may be inappropriate for some users.")
+    if v.get("bot_check") and not signed_in:
+        fail(f"{vid}: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication.")
+
+
 def avatar_url(c):
     a = c.get("avatar")
     return f"file://{(FIX / a).resolve()}" if a and (FIX / a).exists() else ""
@@ -119,6 +136,7 @@ if "-J" in args or "--dump-single-json" in args:
             fail(f"{vid}: Video unavailable")
         if v.get("error"):
             fail(f"{vid}: {v['error']}")
+        gate(vid, v)
         handle, c = video_channel(vid)
         print(json.dumps(video_json(vid, handle or "@unknown", c or {}, False)))
         sys.exit(0)
@@ -173,6 +191,7 @@ if v is None:
     fail(f"{vid}: Video unavailable")
 if v.get("error"):
     fail(f"{vid}: {v['error']}")
+gate(vid, v)
 handle, c = video_channel(vid)
 info = video_json(vid, handle or "@unknown", c or {}, False)
 dest = Path(opt("-P", "."))
@@ -198,7 +217,22 @@ print(f"[info] {vid}: Downloading 1 format(s): 137+140", flush=True)
 print(f"[download] Destination: {media}", flush=True)
 total = len(data)
 steps = 5
-for i in range(1, steps + 1):
+part = Path(f"{media}.part")
+first = 1
+if v.get("break_once") and not part.exists():
+    # cut off half way, as a dropped connection or sleep leaves it
+    part.write_bytes(data[: total // 2])
+    print(tmpl.replace("%(progress.downloaded_bytes)s", str(total // 2)).replace("%(progress.total_bytes)s", str(total)).replace("%(progress.total_bytes_estimate)s", "NA").replace("%(progress.speed)s", "1048576.0").replace("%(progress.eta)s", "1"), flush=True)
+    fail("Unable to download video data: <urlopen error [Errno 104] Connection reset by peer>", "download")
+if part.exists():
+    if "--no-part" in args or "--no-continue" in args:
+        part.unlink()
+    else:
+        info["vidsync_mock_resumed_from"] = part.stat().st_size
+        print(f"[download] Resuming download at byte {part.stat().st_size}", flush=True)
+        first = steps // 2 + 1
+        part.unlink()
+for i in range(first, steps + 1):
     done = total * i // steps
     line = tmpl.replace("%(progress.downloaded_bytes)s", str(done)).replace("%(progress.total_bytes)s", str(total)).replace("%(progress.total_bytes_estimate)s", "NA").replace("%(progress.speed)s", "1048576.0").replace("%(progress.eta)s", str(steps - i))
     print(line or f"[download] {done * 100 / total:5.1f}% of {total}", flush=True)

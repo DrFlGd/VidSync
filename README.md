@@ -32,9 +32,9 @@ Everything the app shows comes from these files, so the folder can be moved, syn
 
 ## Status
 
-First version (0.1). Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
+Version 0.2. Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
 
-Checks run while the app is open. To check while it's closed, schedule `vidsync-cli check-all` (Windows Task Scheduler, cron); it uses the same library.
+Checks run while the app runs: closing the window leaves it in the tray, and Settings can start it at sign-in. Without the app, `vidsync-cli check-all` can be scheduled instead (Windows Task Scheduler, cron); it uses the same library.
 
 ## Building
 

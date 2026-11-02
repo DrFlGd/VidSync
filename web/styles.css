@@ -211,6 +211,7 @@ table.list .sub { font-family: var(--font-mono); font-size: 12px; color: var(--g
 .empty-state input { flex: 1; font-size: 15px; padding: 9px 11px; }
 .notice { padding: 10px 12px; border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--radius); font-size: 14px; margin-bottom: 14px; }
 .notice.error { border-color: var(--danger); background: transparent; color: var(--danger); }
+.notice.ok { border-color: var(--ok); background: transparent; color: var(--ok); }
 
 /* ---- a project's page ---------------------------------------------------- */
 .repo { display: grid; grid-template-columns: minmax(0, 1fr) 320px; flex: 1; min-height: 0; }
@@ -357,6 +358,7 @@ table.list .actions button { padding: 3px 6px; }
 .audit-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .audit-head .spacer { flex: 1; }
 .sublist { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; }
+.log .sublist li { display: block; padding: 2px 0; border: 0; font-size: 13px; }
 
 .source-page { display: grid; grid-template-columns: minmax(0, 1fr) 320px; flex: 1; min-height: 0; }
 .source-main { overflow: auto; padding: 18px 24px 60px; min-width: 0; }

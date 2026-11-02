@@ -37,7 +37,7 @@ Vid Sync/                                   (~/Vid Sync until another folder is 
       Title of the video [dQw4w9WgXcQ].info.json
       Title of the video [dQw4w9WgXcQ].jpg
       Title of the video [dQw4w9WgXcQ].en.vtt   (subtitles, when asked)
-    .partial/                               a download in progress (removed before each check)
+    .partial/                               downloads in progress, and ones cut off (kept a week so the next try carries on)
   youtube.com/playlists/PLxxxx/playlist.json  details, follow, upstream listing, the videos in order
 ```
 
@@ -45,7 +45,7 @@ Vid Sync/                                   (~/Vid Sync until another folder is 
 - A channel's folder is named for its handle (`@handle`, what the user sees in links), a playlist's for its id. The id in the JSON is what counts; the folder is found by scanning, as in Repo Sync.
 - `channel.json`: `source` (kind, id, handle, url), `details` (name, description, avatar, subscribers, video count, as last listed), `follow` (mode, which tabs, quality, subtitles, hours between checks), `creator`, `tags`, `notes`, `last_checked`, `last_changed`, `last_error`, `upstream` (every video listed, newest first: id, title, duration, upload date, when it was first seen, `state`: wanted / not-wanted / members-only / live / failed with the error / skipped by the user). Nothing in `videos/` is deleted except by the user.
 - **Each video's folder describes itself (format 2, decided 2026-11-02 with the owner):** `video.json` beside the media holds the video's record (id, file, title, upload date, duration, bytes, width, height, codecs, downloaded, quality, thumbnail, subtitles, the info file, and the user's own state: tags, watched, the position to resume from). A folder moved or copied on its own keeps everything about it, and saving a resume position rewrites one small file, not the channel's. The folder name isn't stored (it's where the file was found). Format 1 libraries (0.1) kept these records in `channel.json` under `videos`; opening one moves each record into its folder and drops the list from `channel.json`.
-- **Nothing is replaced.** A download goes into `.partial/` and is moved into place when complete, so Stop or a crash never leaves half a video among the kept ones. A video downloaded again (a better quality asked for) gets a new folder stamped with its quality beside the old one.
+- **Nothing is replaced.** A download goes into `.partial/<id>/` and is moved into place when complete, so Stop or a crash never leaves half a video among the kept ones. What a cut-off try got stays there, and the next try of the same video at the same quality carries on from it (yt-dlp's `--continue`); a week later it's cleared. A video downloaded again (a better quality asked for) gets a new folder stamped with its quality beside the old one.
 
 ### Sources and links
 
@@ -85,4 +85,4 @@ A check: list the source upstream (flat, fast, no video pages), merge into `upst
 ## 5. Phases
 
 1. **0.1**: everything above. Checked in a cloud session with the stand-in for yt-dlp (YouTube itself can't be reached from there), the Rust tests and the acceptance test.
-2. Later, if asked: downloading comments or chapters, more sites yt-dlp knows (the folder layout leaves room: `<host>/channels/…`), a tray icon so checks run with the window closed, the app updating itself.
+2. Later, if asked: downloading comments or chapters, more sites yt-dlp knows (the folder layout leaves room: `<host>/channels/…`), the app updating itself. (The tray icon came in 0.2: closing the window leaves the app checking in the tray, unless Settings say quit; a second start shows the first copy's window, so one schedule runs per library.)

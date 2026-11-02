@@ -155,6 +155,14 @@ def recent():
     return api("jobs")["recent"]
 
 
+def notices():
+    return json.loads(urllib.request.urlopen(BASE + "/test/notices").read())
+
+
+def ytdlp_calls():
+    return [json.loads(l) for l in (a.out / "ytdlp-calls.log").read_text().splitlines()]
+
+
 DEMO = "youtube.com/channels/@Demo"
 WORK = "youtube.com/channels/@Workshop"
 FAVES = "youtube.com/playlists/PLdemo000000000000"
@@ -348,6 +356,23 @@ try:
         api("check", {"id": WORK})
         wait_for(lambda: "wrk00000003" in kept("@Workshop") and idle(), "a check from the audit page fetches the new video", 40)
 
+        # ---- a download cut off half way carries on -----------------------------------------
+        edit("channels", "@Workshop", lambda d: d["tabs"]["videos"].insert(0, "wrk00000004"))
+        put("videos", "wrk00000004", {"title": "Interrupted talk", "duration": 900, "upload_date": "20260312", "break_once": True})
+        api("check", {"id": WORK})
+        wait_for(lambda: idle() and upstream("@Workshop").get("wrk00000004", {}).get("state") == "failed", "a download cut off part way is marked failed", 40)
+        check("reached" in upstream("@Workshop")["wrk00000004"]["error"], f"with why: {upstream('@Workshop')['wrk00000004']['error']!r}")
+        part_dir = lib / "_library/.partial/wrk00000004"
+        check(part_dir.is_dir() and any(f.name.endswith(".part") for f in part_dir.iterdir()), "what it got so far is kept for the next try")
+        last_dl = next(c for c in reversed(ytdlp_calls()) if "--progress-template" in c)
+        check("--no-part" not in last_dl and "--continue" in last_dl, "yt-dlp is asked to keep .part files and carry them on")
+        api("video_get", {"id": WORK, "video": "wrk00000004"})
+        wait_for(lambda: idle() and "wrk00000004" in kept("@Workshop"), "the next try finishes it", 40)
+        d4 = next(d for d in (lib / WORK / "videos").iterdir() if "wrk00000004" in d.name)
+        info4 = json.loads(next(d4.glob("*.info.json")).read_text(encoding="utf-8"))
+        check(info4.get("vidsync_mock_resumed_from", 0) > 0, "carrying on from where it stopped, not from the start")
+        check(not part_dir.exists() and not any(f.name.endswith(".part") or f.name == "try.json" for d in (lib / WORK / "videos").iterdir() for f in d.iterdir()), "and nothing of the try is left behind")
+
         # ---- the video's page and the player ---------------------------------------------
         page.goto(BASE + f"/#/video/@Workshop/wrk00000001")
         page.wait_for_selector("#player")
@@ -371,6 +396,10 @@ try:
             r = urllib.request.Request(BASE + src, headers={"Range": "bytes=100-199"})
             with urllib.request.urlopen(r) as resp:
                 check(resp.status == 206 and resp.headers["content-range"].startswith("bytes 100-199/") and len(resp.read()) == 100, "the library serves byte ranges, so the player can seek")
+            r = urllib.request.Request(BASE + src, headers={"Range": "bytes=0-"})
+            with urllib.request.urlopen(r) as resp:
+                size = int(resp.headers["content-range"].rsplit("/", 1)[1])
+                check(resp.status == 206 and len(resp.read()) == min(size, 8 << 20), "an open-ended range is answered with a part, not the whole file at once")
         if REAL_VIDEO:
             page.click(".chapters li >> nth=1 >> button")
         page.screenshot(path=str(a.out / "11-video.png"))
@@ -389,11 +418,44 @@ try:
         api("settings_set", {"library": {**settings, "check_every_hours": 24}})
         wait_for(idle, "scheduled checks finish", 60)
         check(any(f["job"]["by"] == "schedule" for f in recent()), "Activity records scheduled checks")
+        check(any("new video" in n["title"] and "Sixth video" in n["text"] for n in notices()), f"a scheduled check that brings new videos shows a notice {notices()}")
         page.goto(BASE + "/#/settings")
         page.wait_for_selector("#check-every")
         check(page.input_value("#check-every") == "24", "Settings shows how often sources are checked")
         check("yt-dlp" in page.inner_text(".tools") and "2026.10.26-mock" in page.inner_text(".tools"), "Settings shows the yt-dlp that was found and its version")
         page.screenshot(path=str(a.out / "12-settings.png"))
+
+        # ---- running in the background, being gentle, cookies -----------------------------------
+        check(page.is_checked("#keep-running") and page.is_checked("#notices"), "by default Vid Sync keeps checking from the tray and shows notices")
+        page.wait_for_selector("#autostart")
+        check(not page.is_checked("#autostart"), "starting at sign-in is off until asked for")
+        page.check("#autostart")
+        wait_for(lambda: post("/invoke/autostart_get", {}) is True, "it can be turned on from Settings")
+        page.uncheck("#keep-running")
+        wait_for(lambda: api("settings_get")["quit_on_close"] is True, "closing the window can be made to quit")
+        page.check("#keep-running")
+        wait_for(lambda: api("settings_get")["quit_on_close"] is False, "and back")
+        check(api("settings_get")["polite"]["sleep_downloads"] == 3, "downloads pause a few seconds between them by default")
+        page.fill("#sleep-downloads", "2")
+        page.press("#sleep-downloads", "Enter")
+        page.fill("#limit-rate", "4")
+        page.press("#limit-rate", "Enter")
+        wait_for(lambda: api("settings_get")["polite"]["sleep_downloads"] == 2 and api("settings_get")["polite"]["limit_rate"] == 4 * 1048576, "the pause and a speed limit are saved")
+        page.select_option("#cookies-from", "browser:chrome")
+        wait_for(lambda: api("settings_get")["cookies"] == {"mode": "browser", "browser": "chrome", "file": ""}, "cookies are picked from a list of browsers")
+        page.click("#cookies-test")
+        page.wait_for_selector("#cookies-result", timeout=20000)
+        check("Firefox" in page.inner_text("#cookies-result") and "error" in page.get_attribute("#cookies-result", "class"), f"Test says when a browser's cookies can't be read, and what to do {page.inner_text('#cookies-result')!r}")
+        page.select_option("#cookies-from", "browser:firefox")
+        wait_for(lambda: api("settings_get")["cookies"]["browser"] == "firefox", "another browser can be picked")
+        page.click("#cookies-test")
+        wait_for(lambda: "age-restricted" in page.inner_text("#cookies-result") and " ok" in page.get_attribute("#cookies-result", "class"), "Test says when YouTube answers with the cookies")
+        page.locator("#cookies-test").scroll_into_view_if_needed()
+        page.screenshot(path=str(a.out / "12c-settings-cookies.png"))
+        page.locator("#keep-running").scroll_into_view_if_needed()
+        page.screenshot(path=str(a.out / "12c-settings-background.png"))
+        test_call = next(c for c in reversed(ytdlp_calls()) if "HtVdAasjOgU" in " ".join(c))
+        check(test_call[test_call.index("--cookies-from-browser") + 1] == "firefox", "the test reads an age-restricted video with the browser's cookies")
 
         # ---- following settings on a source -------------------------------------------------
         page.goto(BASE + f"/#/source/{DEMO}")
@@ -407,6 +469,9 @@ try:
         calls = (a.out / "ytdlp-calls.log").read_text().splitlines()
         last_dl = next(json.loads(l) for l in reversed(calls) if "--progress-template" in l)
         check(any("res:720" in x for x in last_dl), "the quality asked for is passed to yt-dlp")
+        check(last_dl[last_dl.index("--sleep-interval") + 1] == "2" and last_dl[last_dl.index("--limit-rate") + 1] == str(4 * 1048576), "with the pause and the speed limit from Settings")
+        check(last_dl[last_dl.index("--cookies-from-browser") + 1] == "firefox", "and the cookies")
+        api("settings_set", {"cookies": {"mode": "", "browser": "", "file": ""}, "polite": {"sleep_requests": 0.5, "sleep_downloads": 3, "limit_rate": 0}})
 
         # ---- deleting a video, removing sources -------------------------------------------------
         page.goto(BASE + "/#/video/@Demo/vid00000002")
@@ -487,6 +552,21 @@ try:
         wait_for(lambda: page.locator(".card.video").count() == 5, "the moved library shows its videos")
         thumb = page.evaluate("document.querySelector('.card.video img')?.getAttribute('src') || ''")
         check(thumb.startswith("/library/"), "and their pictures load from the new place")
+
+        # ---- YouTube asks whether this is a bot: scheduled checks wait --------------------------
+        put("videos", "vid00000008", {"title": "Guarded video", "duration": 40, "upload_date": "20260402", "bot_check": True})
+        put("videos", "vid00000009", {"title": "Next in line", "duration": 40, "upload_date": "20260403"})
+        edit("channels", "@Demo", lambda d: d["tabs"]["videos"].__setitem__(slice(0, 0), ["vid00000009", "vid00000008"]))
+        api("check", {"id": DEMO})
+        wait_for(lambda: idle() and api("app_info").get("paused_until"), "a bot check pauses scheduled checks", 40)
+        check(upstream("@Demo")["vid00000008"]["state"] == "failed" and "vid00000009" not in kept("@Demo"), "and the run stops there instead of asking again for every video")
+        check(any("needs you" in n["title"] for n in notices()), f"a notice says something needs you {notices()[-1:]}")
+        page.goto(BASE + "/#/activity")
+        page.wait_for_selector("#paused")
+        check("not a bot" in page.inner_text("#paused"), "Activity says why checks wait, and until when")
+        page.screenshot(path=str(a.out / "12d-paused.png"))
+        page.click("#resume-checks")
+        wait_for(lambda: not api("app_info").get("paused_until") and page.locator("#paused").count() == 0, "scheduled checks can be turned back on")
 
         # ---- the look -------------------------------------------------------------------------------
         page.click("#theme-toggle")

@@ -4,13 +4,13 @@
 //! queues the checks that are due (docs/PLAN.md, "Following and the audit").
 
 use crate::capture::{self, plural, Outcome};
-use crate::config::{AppConfig, Cookies, Prefs};
+use crate::config::{AppConfig, Cookies, Polite, Prefs};
 use crate::http::{Client, Progress};
 use crate::library::{self, audit, source_id, split_id, Audit, Channel, Follow, Kind, Library, Listed, Mode, Playlist, PlaylistRef, Settings, State, Video, VIDEOS_DIR};
 use crate::sources::{self, Link};
 use crate::tools;
 use crate::util::{now_iso, now_unix, percent_encode};
-use crate::ytdlp::{set_stage, Stage, YtDlp};
+use crate::ytdlp::{set_stage, Stage, YtDlp, BOT_CHECK, COOKIE_TEST_VIDEO};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -105,7 +105,19 @@ pub struct App {
     client: Arc<Client>,
     /// yt-dlp and ffmpeg as last found (looked for again when Settings change).
     tools: Mutex<(tools::Tool, tools::Tool)>,
+    /// Scheduled checks wait until then (unix seconds) after YouTube asked for a sign-in.
+    paused_until: Mutex<i64>,
+    /// Shows a system notice (title, text); set by the desktop app.
+    notifier: Mutex<Option<Notifier>>,
+    /// The last cookies test: {"state": "testing"|"ok"|"failed", "message", "at"}.
+    cookie_test: Arc<Mutex<Value>>,
 }
+
+/// Shows a system notice: (title, text).
+pub type Notifier = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// How long scheduled checks wait after YouTube asks to confirm it isn't a bot.
+pub const BOT_PAUSE_SECS: i64 = 3600;
 
 impl App {
     /// Open the library from this computer's config and start the worker and the
@@ -125,6 +137,9 @@ impl App {
             wake: Condvar::new(),
             client: Arc::new(Client::new()),
             tools: Mutex::new(found),
+            paused_until: Mutex::new(0),
+            notifier: Mutex::new(None),
+            cookie_test: Arc::new(Mutex::new(Value::Null)),
         });
         let path = app.config.lock().unwrap().library_path();
         app.open_library(path);
@@ -141,7 +156,7 @@ impl App {
     fn open_library(&self, path: PathBuf) {
         match Library::open(&path) {
             Ok(l) => {
-                let _ = std::fs::remove_dir_all(l.partial_dir());
+                capture::clean_partial(&l.partial_dir());
                 *self.lib.lock().unwrap() = Some(l);
                 *self.lib_error.lock().unwrap() = None;
                 let mut c = self.config.lock().unwrap();
@@ -172,7 +187,65 @@ impl App {
         if y.path.is_empty() {
             bail!("yt-dlp wasn't found on this computer. Settings can download it.");
         }
-        Ok(YtDlp { exe: PathBuf::from(y.path), ffmpeg: if f.path.is_empty() { None } else { Some(PathBuf::from(f.path)) }, cookies: self.config.lock().unwrap().cookies.clone() })
+        let c = self.config.lock().unwrap();
+        Ok(YtDlp { exe: PathBuf::from(y.path), ffmpeg: if f.path.is_empty() { None } else { Some(PathBuf::from(f.path)) }, cookies: c.cookies.clone(), polite: c.polite.clone() })
+    }
+
+    /// This computer's settings as they stand (the desktop app reads quit_on_close).
+    pub fn config(&self) -> AppConfig {
+        self.config.lock().unwrap().clone()
+    }
+
+    /// Where system notices go (the desktop app); none until it's set.
+    pub fn set_notifier(&self, f: Notifier) {
+        *self.notifier.lock().unwrap() = Some(f);
+    }
+
+    /// Until when scheduled checks wait (unix seconds), if they do.
+    fn paused(&self) -> Option<i64> {
+        let t = *self.paused_until.lock().unwrap();
+        (t > now_unix()).then_some(t)
+    }
+
+    /// One line for the tray: what's happening, or when the next check is.
+    pub fn status_line(&self) -> String {
+        if let Some(r) = self.jobs.lock().unwrap().current.as_ref() {
+            let (_, place) = r.item.lock().unwrap().clone();
+            return format!("{}{}", r.job.label, if place.is_empty() { String::new() } else { format!(" ({place})") });
+        }
+        if let Some(t) = self.paused() {
+            return format!("Checks paused for {} (YouTube asked for a sign-in)", in_words(t - now_unix()));
+        }
+        let next = self.lib.lock().unwrap().as_ref().map(|l| self.next_check(l));
+        match next.as_ref().and_then(|v| v.as_str()).and_then(crate::util::unix_from_iso) {
+            Some(t) if t <= now_unix() + 60 => "Next check: now".into(),
+            Some(t) => format!("Next check in {}", in_words(t - now_unix())),
+            None => "No checks scheduled".into(),
+        }
+    }
+
+    /// The notice a finished job deserves, if any: new videos found by the
+    /// schedule, or something only the user can fix (cookies, a sign-in).
+    pub fn notice_for(f: &Finished) -> Option<(String, String)> {
+        let needs_you = |t: &str| t.contains("add cookies") || t.contains("cookies file") || t.contains("its cookies") || t.contains("their cookies");
+        let o = f.outcome.as_ref();
+        let reason = if needs_you(&f.message) {
+            Some(f.message.clone())
+        } else {
+            o.and_then(|o| o.failed.iter().find(|x| needs_you(x)).cloned())
+        };
+        if let Some(r) = reason {
+            return Some((format!("{} needs you", f.job.label), r.chars().take(240).collect()));
+        }
+        let got = o.map(|o| o.downloaded.as_slice()).unwrap_or_default();
+        if f.job.by == "schedule" && !got.is_empty() {
+            let mut text = got.iter().take(3).cloned().collect::<Vec<_>>().join(" · ");
+            if got.len() > 3 {
+                text.push_str(&format!(" and {} more", got.len() - 3));
+            }
+            return Some((format!("{}: {}", f.job.label, plural(got.len(), "new video")), text));
+        }
+        None
     }
 
     /// One command, by name, with its arguments as JSON.
@@ -212,6 +285,13 @@ impl App {
                 }
                 Ok(json!({ "job": self.enqueue(JobKind::Move { to: to.clone() }, "library".into(), format!("Moving the library to {to}"), "you") }))
             }
+            "checks_resume" => {
+                *self.paused_until.lock().unwrap() = 0;
+                self.queue_due();
+                Ok(self.app_info())
+            }
+            "cookies_test" => self.cookies_test(a),
+            "cookies_test_result" => Ok(self.cookie_test.lock().unwrap().clone()),
             "prefs_get" => Ok(self.prefs.get()),
             "prefs_set" => {
                 self.prefs.set(&a["prefs"])?;
@@ -423,6 +503,7 @@ impl App {
             "default_library": crate::config::default_library_path().display().to_string(),
             "ytdlp": !y.path.is_empty(),
             "ffmpeg": !f.path.is_empty(),
+            "paused_until": self.paused().map(crate::util::iso_from_unix),
         })
     }
 
@@ -437,6 +518,10 @@ impl App {
             "ytdlp_path": cfg.ytdlp_path,
             "ffmpeg_path": cfg.ffmpeg_path,
             "cookies": cfg.cookies,
+            "polite": cfg.polite,
+            "quit_on_close": cfg.quit_on_close,
+            "notices_off": cfg.notices_off,
+            "cookie_test_video": sources::video_url(COOKIE_TEST_VIDEO),
         }))
     }
 
@@ -455,6 +540,19 @@ impl App {
             if a["cookies"].is_object() {
                 c.cookies = serde_json::from_value::<Cookies>(a["cookies"].clone()).context("those cookie settings can't be read")?;
             }
+            if a["polite"].is_object() {
+                let p: Polite = serde_json::from_value(a["polite"].clone()).context("those settings can't be read")?;
+                if !(0.0..=600.0).contains(&p.sleep_requests) || !(0.0..=3600.0).contains(&p.sleep_downloads) {
+                    bail!("Pauses are between 0 and 600 seconds (between requests) or 3600 seconds (between downloads).");
+                }
+                c.polite = p;
+            }
+            if let Some(b) = a["quit_on_close"].as_bool() {
+                c.quit_on_close = b;
+            }
+            if let Some(b) = a["notices_off"].as_bool() {
+                c.notices_off = b;
+            }
             c.save(&self.paths.config_dir.join("config.json"))?;
         }
         if tools_changed {
@@ -472,7 +570,8 @@ impl App {
         let s = &l.settings;
         let c = l.channels.values().filter(|c| c.followed).filter_map(|c| capture::due_at(&c.last_checked, &c.added, c.follow.every_hours, s));
         let p = l.playlists.values().filter_map(|p| capture::due_at(&p.last_checked, &p.added, p.follow.every_hours, s));
-        c.chain(p).min().map(|t| json!(crate::util::iso_from_unix(t.max(now_unix())))).unwrap_or(Value::Null)
+        let floor = self.paused().unwrap_or(0).max(now_unix());
+        c.chain(p).min().map(|t| json!(crate::util::iso_from_unix(t.max(floor)))).unwrap_or(Value::Null)
     }
 
     fn status_of(&self, target: &str) -> &'static str {
@@ -868,6 +967,9 @@ impl App {
     }
 
     fn queue_due(&self) {
+        if self.paused().is_some() {
+            return;
+        }
         let now = now_unix();
         let due: Vec<(String, String)> = match self.lib.lock().unwrap().as_ref() {
             Some(l) => {
@@ -934,8 +1036,24 @@ impl App {
                 Ok(o) => (o.warnings.is_empty() && o.failed.is_empty(), o.describe(), Some(o)),
                 Err(e) => (false, format!("{e:#}"), None),
             };
-            j.recent.push_front(Finished { job, finished: now_iso(), ok, message, outcome });
+            let bot = message.contains(BOT_CHECK) || outcome.as_ref().is_some_and(|o| o.failed.iter().chain(&o.warnings).any(|x| x.contains(BOT_CHECK)));
+            let f = Finished { job, finished: now_iso(), ok, message, outcome };
+            let notice = Self::notice_for(&f);
+            j.recent.push_front(f);
             j.recent.truncate(50);
+            if bot {
+                // the schedule leaves YouTube alone for a while; what's queued by it waits too
+                *self.paused_until.lock().unwrap() = now_unix() + BOT_PAUSE_SECS;
+                j.queue.retain(|q| q.by != "schedule");
+            }
+            drop(j);
+            if let Some((title, text)) = notice {
+                if !self.config.lock().unwrap().notices_off {
+                    if let Some(n) = self.notifier.lock().unwrap().as_ref() {
+                        n(&title, &text);
+                    }
+                }
+            }
         }
     }
 
@@ -977,6 +1095,40 @@ impl App {
             "can_move": why_not.is_empty(),
             "why_not": why_not,
         }))
+    }
+
+    /// Read an age-restricted video with the cookies given (or the saved ones), on
+    /// a thread of its own so a download in hand doesn't hold it up. The answer
+    /// comes from `cookies_test_result`.
+    fn cookies_test(&self, a: &Value) -> Result<Value> {
+        let mut y = self.ytdlp()?;
+        if a["cookies"].is_object() {
+            y.cookies = serde_json::from_value(a["cookies"].clone()).context("those cookie settings can't be read")?;
+        }
+        y.polite = Polite { sleep_requests: 0.0, ..y.polite };
+        let started = now_iso();
+        let state = json!({ "state": "testing", "at": started, "cookies": y.cookies });
+        *self.cookie_test.lock().unwrap() = state.clone();
+        let out = self.cookie_test.clone();
+        std::thread::Builder::new().name("cookie test".into()).spawn(move || {
+            let res = y.info(&sources::video_url(COOKIE_TEST_VIDEO), &Progress::default());
+            let v = match res {
+                Ok(info) => json!({ "state": "ok", "message": format!("YouTube answered: “{}”, an age-restricted video, can be read. Members-only and private videos you can watch in the browser will download too.", info["title"].as_str().unwrap_or(COOKIE_TEST_VIDEO)) }),
+                Err(e) => {
+                    let why = format!("{e:#}");
+                    let hint = if y.cookies.mode.is_empty() { " (no cookies are set, so this is expected)" } else { "" };
+                    json!({ "state": "failed", "message": format!("{why}{hint}") })
+                }
+            };
+            let mut g = out.lock().unwrap();
+            if g["at"].as_str() == Some(started.as_str()) {
+                let mut v = v;
+                v["at"] = json!(started);
+                v["cookies"] = g["cookies"].clone();
+                *g = v;
+            }
+        })?;
+        Ok(state)
     }
 
     fn run_move(&self, to: &str, run: &Run) -> Result<Outcome> {
@@ -1197,6 +1349,11 @@ impl App {
                     let why = format!("{e:#}");
                     let _ = self.set_state(id, &x.id, State::Failed, &why);
                     out.failed.push(format!("{}: {why}", x.title));
+                    if why.contains(BOT_CHECK) && i + 1 < n {
+                        let left = n - i - 1;
+                        out.warnings.push(format!("Stopped after YouTube asked for a sign-in; {} {} for the next check.", plural(left, "video"), if left == 1 { "waits" } else { "wait" }));
+                        break;
+                    }
                 }
             }
         }
@@ -1256,6 +1413,18 @@ fn upstream_of<'a>(l: &'a Library, id: &str) -> Result<&'a Vec<Listed>> {
     })
 }
 
+/// "3 h 20 min", "45 min", "under a minute".
+fn in_words(secs: i64) -> String {
+    let m = (secs.max(0) + 59) / 60;
+    match (m / 60, m % 60) {
+        (0, 0) => "under a minute".into(),
+        (0, m) => format!("{m} min"),
+        (h, _) if h >= 24 => format!("{} d {} h", h / 24, h % 24),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 fn tags_of(v: &Value) -> Vec<String> {
     let mut tags: Vec<String> = v.as_array().map(|t| t.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
     tags.dedup();
@@ -1295,5 +1464,25 @@ mod tests {
     fn link_labels_and_tags() {
         assert_eq!(label_of_link(&Link::Channel { key: ChannelKey::Handle("@x".into()), tab: None }), "@x");
         assert_eq!(tags_of(&json!(["a", " b ", "", "b"])), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(in_words(3 * 3600 + 20 * 60), "3 h 20 min");
+        assert_eq!(in_words(45 * 60 - 30), "45 min");
+        assert_eq!(in_words(26 * 3600), "1 d 2 h");
+    }
+
+    fn finished(by: &'static str, message: &str, outcome: Option<Outcome>) -> Finished {
+        let job = Job { id: 1, kind: JobKind::Check { id: "channel:@a".into() }, target: "channel:@a".into(), label: "Ahoy".into(), by, queued: String::new() };
+        Finished { job, finished: String::new(), ok: true, message: message.into(), outcome }
+    }
+
+    #[test]
+    fn notices_for_new_videos_and_what_needs_you() {
+        let got = Outcome { downloaded: vec!["One".into(), "Two".into()], ..Default::default() };
+        assert_eq!(App::notice_for(&finished("schedule", "", Some(got.clone()))), Some(("Ahoy: 2 new videos".into(), "One · Two".into())));
+        assert_eq!(App::notice_for(&finished("you", "", Some(got))), None);
+        let n = App::notice_for(&finished("you", BOT_CHECK, None)).unwrap();
+        assert_eq!(n.0, "Ahoy needs you");
+        let failed = Outcome { failed: vec![format!("Clip: {BOT_CHECK}")], ..Default::default() };
+        assert!(App::notice_for(&finished("schedule", "", Some(failed))).is_some());
+        assert_eq!(App::notice_for(&finished("schedule", "", Some(Outcome::default()))), None);
     }
 }

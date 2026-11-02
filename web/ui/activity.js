@@ -21,8 +21,13 @@ async function stop(job) {
   try { await api("job_stop", { job }); poke(); } catch (e) { toast(errText(e), 6000); }
 }
 
+async function resumeChecks() {
+  try { const i = await api("checks_resume"); ui.set({ info: { ...ui.get().info, ...i } }); poke(); toast("Scheduled checks are back on"); } catch (e) { toast(errText(e), 6000); }
+}
+
 export function ActivityPage() {
   const jobs = useStore(ui, (s) => s.jobs);
+  const paused = useStore(ui, (s) => s.info.paused_until);
   const next = useStore(ui, (s) => s.totals.next_check);
   const cur = jobs.current;
   const pct = cur && cur.total > 0 ? Math.min(100, (cur.done / cur.total) * 100) : null;
@@ -30,6 +35,8 @@ export function ActivityPage() {
       ${next && html`<span class="muted" title=${when(next)}>Next scheduled check ${ago(next)}</span>`}
       <button type="button" onClick=${checkAll}>${Icon.refresh(15)} Check all now</button></div>
     <div class="page page-narrow">
+      ${paused && html`<p class="notice" id="paused">YouTube asked to confirm you're not a bot, so scheduled checks wait until ${when(paused)} (${ago(paused)}). Cookies from a browser you're signed in to (<a href="#/settings">Settings</a>) usually stop this.
+        <button type="button" class="small" id="resume-checks" style="margin-left:8px" onClick=${resumeChecks}>Check on schedule again now</button></p>`}
       <h2 class="section-head">Now</h2>
       <div class="panel job-now" id="job-now">${cur ? html`
         <div><b>${what(cur.job)}</b> ${target(cur.job)} <span class="muted">· started ${ago(cur.started)}</span></div>
