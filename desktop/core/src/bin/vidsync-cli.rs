@@ -222,20 +222,21 @@ fn content_type(path: &str) -> &'static str {
 
 /// A library file, whole or a range of it (the player seeks with Range requests).
 fn serve_file(stream: &mut std::net::TcpStream, p: &Path, range: Option<&str>) -> Result<()> {
-    let data = std::fs::read(p)?;
+    let part = vidsync_core::util::read_file_part(p, range)?;
     let ctype = content_type(&p.to_string_lossy());
-    let total = data.len() as u64;
-    if let Some((start, end)) = range.and_then(|r| vidsync_core::util::byte_range(r, total)) {
-        let body = &data[start as usize..=end as usize];
-        return respond_with(stream, 206, ctype, &[("content-range", format!("bytes {start}-{end}/{total}")), ("accept-ranges", "bytes".into())], body);
+    let mut headers = vec![("accept-ranges", "bytes".to_string())];
+    if let Some(cr) = part.content_range {
+        headers.push(("content-range", cr));
     }
-    respond_with(stream, 200, ctype, &[("accept-ranges", "bytes".into())], &data)
+    respond_with(stream, part.status, ctype, &headers, &part.body)
 }
 
 /// The app's commands over HTTP: POST /invoke/<command> (as tests/tauri_shim.js
 /// sends them), GET /library/<path> for library files, everything else from --ui.
 /// POST /test/pick queues the answer to the next folder dialog; GET /test/opened
-/// lists what the page asked to open (folders, web links).
+/// lists what the page asked to open (folders, web links); GET /test/notices the
+/// system notices the desktop app would have shown. autostart_get/_set stand in
+/// for the desktop app's start-at-sign-in switch.
 fn serve(mut a: Args) -> Result<()> {
     let ui = PathBuf::from(a.need("--ui")?);
     let home = PathBuf::from(a.need("--home")?);
@@ -251,11 +252,16 @@ fn serve(mut a: Args) -> Result<()> {
     let app = App::new(AppPaths { config_dir, library_url: "/library/".into() }, Duration::from_secs_f64(tick))?;
     let picks: Arc<Mutex<Vec<String>>> = Arc::default();
     let opened: Arc<Mutex<Vec<Value>>> = Arc::default();
+    // what the desktop app would show as system notices, and its start-at-sign-in switch
+    let notices: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let autostart: Arc<Mutex<bool>> = Arc::default();
+    let n = notices.clone();
+    app.set_notifier(Box::new(move |title, text| n.lock().unwrap().push(json!({ "title": title, "text": text }))));
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     eprintln!("serving on http://127.0.0.1:{port}/ (home {})", home.display());
     for conn in listener.incoming() {
         let Ok(mut stream) = conn else { continue };
-        let (app, ui, picks, opened) = (app.clone(), ui.clone(), picks.clone(), opened.clone());
+        let (app, ui, picks, opened, notices, autostart) = (app.clone(), ui.clone(), picks.clone(), opened.clone(), notices.clone(), autostart.clone());
         std::thread::spawn(move || {
             let Ok(req) = read_request(&mut stream) else { return };
             let path = req.path.split('?').next().unwrap_or("/").to_string();
@@ -277,6 +283,11 @@ fn serve(mut a: Args) -> Result<()> {
                             };
                             respond(&mut stream, 200, "application/json", &serde_json::to_vec(&json!(next))?)
                         }
+                        "autostart_get" => respond(&mut stream, 200, "application/json", &serde_json::to_vec(&json!(*autostart.lock().unwrap()))?),
+                        "autostart_set" => {
+                            *autostart.lock().unwrap() = args["on"].as_bool().unwrap_or(false);
+                            respond(&mut stream, 200, "application/json", &serde_json::to_vec(&json!(*autostart.lock().unwrap()))?)
+                        }
                         "open_path" | "open_url" | "reveal" => {
                             opened.lock().unwrap().push(json!({ "cmd": cmd, "args": args }));
                             respond(&mut stream, 200, "application/json", b"null")
@@ -289,6 +300,9 @@ fn serve(mut a: Args) -> Result<()> {
                         picks.lock().unwrap().push(p.to_string());
                     }
                     respond(&mut stream, 200, "application/json", b"true")
+                } else if path == "/test/notices" {
+                    let v = serde_json::to_vec(&*notices.lock().unwrap())?;
+                    respond(&mut stream, 200, "application/json", &v)
                 } else if path == "/test/opened" {
                     let v = serde_json::to_vec(&*opened.lock().unwrap())?;
                     respond(&mut stream, 200, "application/json", &v)

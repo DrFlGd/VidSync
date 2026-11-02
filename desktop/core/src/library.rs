@@ -117,11 +117,19 @@ pub struct Follow {
     pub subtitles: String,
     /// Hours between checks: None follows the library's setting, 0 is never (only by hand).
     pub every_hours: Option<f64>,
+    /// Keep only this many of the newest videos (0: keep them all). Older ones are
+    /// deleted after a check, and not downloaded in the first place; the audit
+    /// still lists them. A video with one of your tags is always kept.
+    pub keep_newest: u32,
+    /// Delete a watched video this many days after it was watched (0: never).
+    pub drop_watched_days: u32,
+    /// Save the top comments with each video (at most 200, no replies).
+    pub comments: bool,
 }
 
 impl Default for Follow {
     fn default() -> Self {
-        Self { mode: Mode::New, tabs: Tabs::default(), quality: Quality::Best, subtitles: String::new(), every_hours: None }
+        Self { mode: Mode::New, tabs: Tabs::default(), quality: Quality::Best, subtitles: String::new(), every_hours: None, keep_newest: 0, drop_watched_days: 0, comments: false }
     }
 }
 
@@ -202,8 +210,41 @@ pub struct Video {
     /// The quality asked for when it was downloaded ("best", "1080p", "720p", "audio").
     pub quality: String,
     pub tags: Vec<String>,
+    /// Watched to the end (or marked so).
+    pub watched: bool,
+    /// When it was watched (ISO 8601), for "delete watched videos after".
+    pub watched_at: String,
+    /// Where playing stopped, in seconds (0: from the start).
+    pub position: f64,
+    /// When it was last played (ISO 8601), for Continue watching.
+    pub played: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl Video {
+    /// Record how far it was played: near the end counts as watched (and starts
+    /// over next time); a few seconds in counts as not started.
+    pub fn played_to(&mut self, position: f64, ended: bool) {
+        let near_end = self.duration > 0.0 && position >= self.duration - (self.duration * 0.05).min(30.0);
+        if ended || near_end {
+            self.set_watched(true);
+        } else {
+            self.position = if position < 5.0 { 0.0 } else { (position * 10.0).round() / 10.0 };
+        }
+        self.played = crate::util::now_iso();
+    }
+
+    pub fn set_watched(&mut self, on: bool) {
+        if on && !self.watched {
+            self.watched_at = crate::util::now_iso();
+        }
+        if !on {
+            self.watched_at.clear();
+        }
+        self.watched = on;
+        self.position = 0.0;
+    }
 }
 
 /// Which channel this is.

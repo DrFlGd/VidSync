@@ -144,7 +144,7 @@ function Creator({ source, save }) {
   return html`<div class="field">
     <input id="creator-input" type="text" list="creator-names" placeholder="A person or studio with several channels" value=${text} onInput=${(e) => setText(e.target.value)} onBlur=${commit} onKeyDown=${(e) => e.key === "Enter" && (e.preventDefault(), commit())} />
     <datalist id="creator-names">${list.map((c) => html`<option value=${c.name} />`)}</datalist>
-    <p class="hint">Your own grouping of channels, listed in the menu. Leave it empty for none.</p>
+    <p class="hint">Your own grouping of channels, listed in the menu. Leave it empty for none.${source.creator ? html` <a href=${`#/creator/${encodeURIComponent(source.creator)}`} id="creator-link">${source.creator}'s page</a>` : ""}</p>
   </div>`;
 }
 

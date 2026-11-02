@@ -31,6 +31,25 @@ pub struct Cookies {
     pub file: String,
 }
 
+/// How gently yt-dlp treats YouTube: pauses and a speed limit, so long runs
+/// meet fewer "confirm you're not a bot" checks.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Polite {
+    /// Seconds between the requests yt-dlp makes while reading a page (`--sleep-requests`).
+    pub sleep_requests: f64,
+    /// Seconds to wait before each video's download (`--sleep-interval`).
+    pub sleep_downloads: f64,
+    /// Most bytes a second, 0 for no limit (`--limit-rate`).
+    pub limit_rate: u64,
+}
+
+impl Default for Polite {
+    fn default() -> Self {
+        Self { sleep_requests: 0.5, sleep_downloads: 3.0, limit_rate: 0 }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -41,6 +60,13 @@ pub struct AppConfig {
     /// ffmpeg, when the user pointed at one ("" finds it).
     pub ffmpeg_path: String,
     pub cookies: Cookies,
+    pub polite: Polite,
+    /// Closing the window quits, instead of leaving Vid Sync in the tray to check.
+    pub quit_on_close: bool,
+    /// No system notices for new videos or for things that need the user.
+    pub notices_off: bool,
+    /// Videos downloaded side by side in a check (1 to 3; 0 reads as 1).
+    pub parallel: u32,
 }
 
 impl AppConfig {
