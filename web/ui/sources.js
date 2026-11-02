@@ -86,7 +86,7 @@ export function SourcesPage() {
         <div><button type="button" class="primary" onClick=${() => openAdd("")}>${Icon.plus(15)} Add a channel or playlist</button></div></div>`}
       ${(followed.length > 0 || adding.length > 0) && html`<h2 class="section-head">Channels <span class="n">${followed.length}</span></h2>
         ${groups.map(([creator, list]) => html`<div key=${creator} class="creator-group">
-          ${groups.length > 1 || creator ? html`<h3 class="creator-head" data-creator=${creator}>${creator ? html`<a href=${`#/?creator=${encodeURIComponent(creator)}`} title="This creator's videos">${Icon.creator(14)} ${creator}</a>` : "Other channels"}<span class="n">${list.length}</span></h3>` : null}
+          ${groups.length > 1 || creator ? html`<h3 class="creator-head" data-creator=${creator}>${creator ? html`<a href=${`#/creator/${encodeURIComponent(creator)}`} title="This creator's page: their channels and newest videos">${Icon.creator(14)} ${creator}</a>` : "Other channels"}<span class="n">${list.length}</span></h3>` : null}
           <div class="cards sources">
             ${!creator && adding.map((j) => html`<article class="card source pending" key=${"p" + j.id}><div class="card-top"><span class="avatar">${Icon.channel(22)}</span><div class="card-title"><h3>${j.label}</h3><div class="card-sub">${jobs.current?.job?.id === j.id ? jobs.current.stage : "Waiting its turn"}</div></div><span class="badge working">Adding…</span></div></article>`)}
             ${list.map((c) => html`<${SourceCard} key=${c.id} s=${c} />`)}

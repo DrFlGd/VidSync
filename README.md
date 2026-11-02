@@ -9,6 +9,9 @@ A desktop app (Windows first, Linux kept portable) that keeps a library of YouTu
 - **New videos on a schedule.** Every followed source is checked every day by default (hourly to weekly, or by hand; per source too). A channel added with "New videos from now on" downloads only what it publishes after that; "Every video" takes the lot; "Only list them" fills the audit without downloading. Activity shows the download in hand (with Stop), what's waiting and what each check found.
 - **An audit of what's missing.** For every source, what YouTube lists against what the library keeps: kept, missing, failed (with yt-dlp's reason: members only, private, age restricted…), not wanted, skipped, gone. Any listed video can be fetched or skipped on purpose from the source's Audit tab, and the Audit page totals it all.
 - **Organised in several ways.** Videos by channel, by playlist (in the playlist's order), by creator (your own grouping of channels, such as a person with several of them), by tag and by search; cards or a list, sorted by published, downloaded, title, channel, length or size.
+- **Watching.** The player carries on where you stopped; videos are marked watched, with a Continue watching row and a Not watched yet filter. Ctrl or Shift and click chooses several videos to mark, tag or delete together. A channel can keep only its newest videos, or let watched ones go after a while.
+- **Find things.** Search looks inside subtitles and descriptions too, and jumps the player to the second something is said; any filter and search can be saved to the menu; a source can keep the top comments with each video.
+- **More at once.** Two or three downloads side by side, a folder of videos downloaded with yt-dlp before brought into the library (copied or moved, each into its channel), and any video downloaded again in another quality, keeping your tags and where you'd got to.
 - **A page for each video**: played in the app (seeking works), description with clickable timestamps, chapters, views, length, resolution, file details and your tags; and a page for each channel or playlist with its videos, audit, follow settings, creator, tags and notes.
 
 The design and the plan are in [docs/PLAN.md](docs/PLAN.md). The stack and look follow [Repo Sync](https://github.com/DrFlGd/Repo-Sync), [Model Library](https://github.com/DrFlGd/Model-Library) and [SCAD Workshop](https://github.com/DrFlGd/SCAD-Workshop): a Rust core, a Tauri 2 window, a Preact page with no build step, the Drafting Sheet skin.
@@ -19,9 +22,11 @@ The design and the plan are in [docs/PLAN.md](docs/PLAN.md). The stack and look 
 Vid Sync/                                 (~/Vid Sync until you choose another folder)
   _library/library.json                   the library's id, name and settings (schedule, defaults for new sources)
   youtube.com/channels/@handle/
-    channel.json                          details, follow settings, creator, tags, what's listed upstream, every kept video
+    channel.json                          details, follow settings, creator, tags, notes, what's listed upstream
     avatar.jpg
-    videos/2026-03-01 Title [videoid]/    one folder per video: the media, its .info.json, thumbnail, subtitles
+    videos/2026-03-01 Title [videoid]/    one folder per video, describing itself:
+      video.json                          the video's record: title, dates, size, quality, your tags, watched
+      Title [videoid].mp4                 the media, its .info.json, thumbnail and subtitles beside it
   youtube.com/playlists/PLxxxx/
     playlist.json                         details, follow settings, the ordered list of its videos (kept in their channels)
 ```
@@ -30,9 +35,9 @@ Everything the app shows comes from these files, so the folder can be moved, syn
 
 ## Status
 
-First version (0.1). Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
+Version 0.5. Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
 
-Checks run while the app is open. To check while it's closed, schedule `vidsync-cli check-all` (Windows Task Scheduler, cron); it uses the same library.
+Checks run while the app runs: closing the window leaves it in the tray, and Settings can start it at sign-in. Without the app, `vidsync-cli check-all` can be scheduled instead (Windows Task Scheduler, cron); it uses the same library.
 
 ## Building
 
@@ -45,4 +50,4 @@ CI (`.github/workflows/desktop.yml`) builds and tests the Windows app on every p
 
 ## Licence
 
-Not chosen yet. Third-party code, programs and fonts are listed in [THIRD_PARTY.md](THIRD_PARTY.md). yt-dlp and ffmpeg are run as separate programs; downloading videos is subject to YouTube's terms and the rights of their creators.
+MIT ([LICENSE](LICENSE)). Third-party code, programs and fonts are listed in [THIRD_PARTY.md](THIRD_PARTY.md). yt-dlp and ffmpeg are run as separate programs; downloading videos is subject to YouTube's terms and the rights of their creators.

@@ -148,6 +148,72 @@ pub fn safe_rel(p: &Path) -> Option<PathBuf> {
 }
 
 /// Bytes and files under a folder (links aren't followed).
+/// Move a folder to `to` (which must not exist, or be an empty folder):
+/// renamed when both are on the same drive, otherwise copied file by file with
+/// progress and then deleted. The source is only deleted once everything is
+/// copied; on an error or Stop the copy is removed and the source left as it was.
+pub fn move_tree(from: &Path, to: &Path, progress: &crate::http::Progress) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::sync::atomic::Ordering;
+    if to.exists() {
+        if std::fs::read_dir(to)?.next().is_some() {
+            anyhow::bail!("{} isn't empty", to.display());
+        }
+        std::fs::remove_dir(to)?;
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    let (total, _) = dir_size(from);
+    progress.total.store(total, Ordering::Relaxed);
+    progress.done.store(0, Ordering::Relaxed);
+    let res = (|| -> anyhow::Result<()> {
+        let mut stack = vec![(from.to_path_buf(), to.to_path_buf())];
+        let mut buf = vec![0u8; 1 << 20];
+        while let Some((src, dst)) = stack.pop() {
+            std::fs::create_dir_all(&dst).with_context(|| format!("couldn't make {}", dst.display()))?;
+            for e in std::fs::read_dir(&src)?.flatten() {
+                if progress.stopped() {
+                    anyhow::bail!("Stopped");
+                }
+                let ft = e.file_type()?;
+                let (s, d) = (e.path(), dst.join(e.file_name()));
+                if ft.is_dir() {
+                    stack.push((s, d));
+                } else if ft.is_file() {
+                    let mut r = std::fs::File::open(&s).with_context(|| format!("couldn't read {}", s.display()))?;
+                    let mut w = std::fs::File::create(&d).with_context(|| format!("couldn't write {}", d.display()))?;
+                    loop {
+                        let n = std::io::Read::read(&mut r, &mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        std::io::Write::write_all(&mut w, &buf[..n])?;
+                        progress.done.fetch_add(n as u64, Ordering::Relaxed);
+                        if progress.stopped() {
+                            anyhow::bail!("Stopped");
+                        }
+                    }
+                }
+            }
+        }
+        let (copied, _) = dir_size(to);
+        if copied != total {
+            anyhow::bail!("the copy came to {copied} bytes, not {total}; the library was left where it was");
+        }
+        Ok(())
+    })();
+    if let Err(e) = res {
+        let _ = std::fs::remove_dir_all(to);
+        return Err(e);
+    }
+    std::fs::remove_dir_all(from).with_context(|| format!("everything was copied to {}, but {} couldn't be deleted", to.display(), from.display()))?;
+    Ok(())
+}
+
 pub fn dir_size(dir: &Path) -> (u64, u64) {
     let (mut bytes, mut files) = (0, 0);
     let mut stack = vec![dir.to_path_buf()];
@@ -201,6 +267,27 @@ pub fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_tree_moves_everything() {
+        let base = std::env::temp_dir().join(format!("vidsync-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let from = base.join("a");
+        std::fs::create_dir_all(from.join("x/y")).unwrap();
+        std::fs::write(from.join("x/y/f.txt"), "hello").unwrap();
+        std::fs::write(from.join("top.json"), "{}").unwrap();
+        let to = base.join("b/lib");
+        std::fs::create_dir_all(&to).unwrap(); // an empty folder is fine
+        move_tree(&from, &to, &crate::http::Progress::default()).unwrap();
+        assert!(!from.exists());
+        assert_eq!(std::fs::read_to_string(to.join("x/y/f.txt")).unwrap(), "hello");
+        // into a folder with something in it: refused, nothing touched
+        std::fs::create_dir_all(base.join("c")).unwrap();
+        std::fs::write(base.join("c/other"), "x").unwrap();
+        assert!(move_tree(&to, &base.join("c"), &crate::http::Progress::default()).is_err());
+        assert!(to.join("top.json").is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn times_round_trip() {
@@ -273,6 +360,41 @@ pub fn byte_range(header: &str, total: u64) -> Option<(u64, u64)> {
     (start <= end && start < total).then_some((start, end))
 }
 
+/// The most an open-ended range ("bytes=N-") is answered with: the player asks
+/// again for the rest, so a seek never reads a whole video into memory.
+pub const RANGE_CHUNK: u64 = 8 << 20;
+
+/// What to answer a request for a file: the status (200 or 206), the
+/// Content-Range when it's a part, the file's size and the bytes. Only the part
+/// asked for is read from disk.
+pub struct FilePart {
+    pub status: u16,
+    pub content_range: Option<String>,
+    pub total: u64,
+    pub body: Vec<u8>,
+}
+
+pub fn read_file_part(path: &Path, range: Option<&str>) -> std::io::Result<FilePart> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    let total = f.metadata()?.len();
+    let open_ended = range.is_some_and(|r| r.trim().ends_with('-'));
+    match range.and_then(|r| byte_range(r, total)) {
+        Some((start, end)) => {
+            let end = if open_ended { end.min(start + RANGE_CHUNK - 1) } else { end };
+            f.seek(SeekFrom::Start(start))?;
+            let mut body = Vec::with_capacity((end - start + 1) as usize);
+            f.take(end - start + 1).read_to_end(&mut body)?;
+            Ok(FilePart { status: 206, content_range: Some(format!("bytes {start}-{end}/{total}")), total, body })
+        }
+        None => {
+            let mut body = Vec::with_capacity(total as usize);
+            f.read_to_end(&mut body)?;
+            Ok(FilePart { status: 200, content_range: None, total, body })
+        }
+    }
+}
+
 #[cfg(test)]
 mod range_tests {
     use super::*;
@@ -286,4 +408,35 @@ mod range_tests {
         assert_eq!(byte_range("bytes=1000-", 1000), None);
         assert_eq!(mime("a.MP4"), "video/mp4");
     }
+
+    #[test]
+    fn only_the_part_asked_for_is_read() {
+        let dir = std::env::temp_dir().join(format!("vs-range-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("v.bin");
+        let data: Vec<u8> = (0..(RANGE_CHUNK + 1000)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&f, &data).unwrap();
+        let p = read_file_part(&f, Some("bytes=10-19")).unwrap();
+        assert_eq!((p.status, p.body.as_slice()), (206, &data[10..20]));
+        let p = read_file_part(&f, Some("bytes=0-")).unwrap();
+        assert_eq!(p.body.len() as u64, RANGE_CHUNK);
+        assert_eq!(p.content_range.as_deref(), Some(format!("bytes 0-{}/{}", RANGE_CHUNK - 1, data.len()).as_str()));
+        let p = read_file_part(&f, Some("bytes=-100")).unwrap();
+        assert_eq!(p.body.as_slice(), &data[data.len() - 100..]);
+        let p = read_file_part(&f, None).unwrap();
+        assert_eq!((p.status, p.body.len()), (200, data.len()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 1536 -> "1.5 KB", for messages.
+pub fn human_bytes(n: u64) -> String {
+    let units = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < units.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 { format!("{n} bytes") } else { format!("{v:.1} {}", units[i]) }
 }

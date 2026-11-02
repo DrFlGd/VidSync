@@ -2,18 +2,25 @@
 // behind web/platform-desktop.js. Every command goes through
 // vidsync_core::api::App::call (the same table `vidsync-cli serve` uses for
 // testing); this file adds what needs the window: the folder and file dialogs,
-// the file manager, web links and the library:// protocol for videos and
-// pictures (with Range requests, so the player can seek).
+// the file manager, web links, the library:// protocol for videos and
+// pictures (with Range requests, so the player can seek), the tray (closing the
+// window leaves the app checking there), starting at sign-in (--hidden: straight
+// to the tray), system notices, and one copy running at a time.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use vidsync_core::api::{App, AppPaths};
-use vidsync_core::util::{byte_range, mime};
+use vidsync_core::util::{mime, read_file_part};
 
 struct AppState {
     app: Arc<App>,
@@ -71,6 +78,76 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(err)
 }
 
+/// Whether Vid Sync starts (in the tray) when the user signs in.
+#[tauri::command]
+fn autostart_get(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(err)
+}
+
+#[tauri::command]
+fn autostart_set(app: AppHandle, on: bool) -> Result<bool, String> {
+    let a = app.autolaunch();
+    if on { a.enable() } else { a.disable() }.map_err(err)?;
+    a.is_enabled().map_err(err)
+}
+
+/// Bring the window back (from the tray, or when Vid Sync is started again).
+fn show(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The tray icon: what's happening (or the next check), Open, Check all, Quit.
+/// The line at the top is refreshed every few seconds.
+fn tray(app: &tauri::App, core: Arc<App>) -> tauri::Result<()> {
+    let status = MenuItem::with_id(app, "status", core.status_line(), false, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Vid Sync", true, None::<&str>)?;
+    let check = MenuItem::with_id(app, "check", "Check all now", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Vid Sync", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&status, &PredefinedMenuItem::separator(app)?, &open, &check, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let checker = core.clone();
+    let mut b = TrayIconBuilder::with_id("main")
+        .tooltip("Vid Sync")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, e| match e.id.as_ref() {
+            "open" => show(app),
+            "check" => {
+                let c = checker.clone();
+                std::thread::spawn(move || {
+                    let _ = c.call("check_all", json!({}));
+                });
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|t, e| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                show(t.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        b = b.icon(icon.clone());
+    }
+    let icon = b.build(app)?;
+    std::thread::Builder::new().name("tray".into()).spawn(move || {
+        let mut last = String::new();
+        loop {
+            let line = core.status_line();
+            if line != last {
+                let _ = status.set_text(&line);
+                let _ = icon.set_tooltip(Some(format!("Vid Sync: {line}")));
+                last = line;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    })?;
+    Ok(())
+}
+
 /// The app's own addresses. Anything else a link leads to opens in the browser
 /// instead of replacing the app.
 fn in_app(url: &tauri::Url) -> bool {
@@ -88,7 +165,13 @@ fn open_outside(app: &AppHandle, url: &tauri::Url) {
 }
 
 fn main() {
+    // started at sign-in: straight to the tray, no window
+    let hidden = std::env::args().any(|a| a == "--hidden");
     tauri::Builder::default()
+        // a second start shows the window of the copy that's running (one schedule, one library)
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app)))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // library://localhost/<path> (http://library.localhost/<path> on Windows): files in the open library
@@ -97,37 +180,45 @@ fn main() {
             let path = request.uri().path().to_string();
             let range = request.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
             tauri::async_runtime::spawn_blocking(move || {
-                let response = match app.library_path(&path).and_then(|p| Ok(std::fs::read(p)?)) {
-                    Ok(data) => {
-                        let total = data.len() as u64;
-                        let b = tauri::http::Response::builder()
+                let response = match app.library_path(&path).and_then(|p| Ok(read_file_part(&p, range.as_deref())?)) {
+                    Ok(part) => {
+                        let mut b = tauri::http::Response::builder()
+                            .status(part.status)
                             .header("Content-Type", mime(&path))
                             .header("Accept-Ranges", "bytes")
                             // a picture is shown as a picture, never run as a page
                             .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'self'")
                             .header("Access-Control-Allow-Origin", "*");
-                        match range.as_deref().and_then(|r| byte_range(r, total)) {
-                            Some((s, e)) => b.status(206).header("Content-Range", format!("bytes {s}-{e}/{total}")).body(data[s as usize..=e as usize].to_vec()),
-                            None => b.status(200).body(data),
+                        if let Some(cr) = part.content_range {
+                            b = b.header("Content-Range", cr);
                         }
+                        b.body(part.body)
                     }
                     Err(e) => tauri::http::Response::builder().status(404).body(e.to_string().into_bytes()),
                 };
                 responder.respond(response.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
             });
         })
-        .setup(|app| {
+        .setup(move |app| {
             let paths = AppPaths {
                 config_dir: app.path().app_config_dir()?,
                 library_url: if cfg!(windows) { "http://library.localhost/".into() } else { "library://localhost/".into() },
             };
             let core = App::new(paths, std::time::Duration::from_secs(30))?;
-            app.manage(AppState { app: core });
+            let notify = app.handle().clone();
+            core.set_notifier(Box::new(move |title, text| {
+                let _ = notify.notification().builder().title(title).body(text).show();
+            }));
+            app.manage(AppState { app: core.clone() });
+            if let Err(e) = tray(app, core) {
+                eprintln!("no tray icon: {e}");
+            }
             // the window (tauri.conf.json, "create": false), made here so a link in a
             // description can't take it over: the web opens in the browser
             let cfg = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("tauri.conf.json has no main window")?;
             let (to_browser, to_browser2) = (app.handle().clone(), app.handle().clone());
             tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+                .visible(!hidden)
                 .on_navigation(move |url| {
                     if in_app(url) {
                         return true;
@@ -144,7 +235,21 @@ fn main() {
                 .build()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![api, pick_folder, pick_file, reveal, open_path, open_url])
+        // closing the window leaves Vid Sync in the tray, checking, unless Settings say quit
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let core = window.state::<AppState>().app.clone();
+                if !core.config().quit_on_close {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    static TOLD: AtomicBool = AtomicBool::new(false);
+                    if !TOLD.swap(true, Ordering::Relaxed) && !core.config().notices_off {
+                        let _ = window.app_handle().notification().builder().title("Vid Sync is still running").body("It keeps checking for new videos from the tray. Settings can make closing the window quit.").show();
+                    }
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![api, pick_folder, pick_file, reveal, open_path, open_url, autostart_get, autostart_set])
         .run(tauri::generate_context!())
         .expect("error while running Vid Sync");
 }

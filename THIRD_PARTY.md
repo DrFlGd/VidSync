@@ -10,6 +10,6 @@
 | [zip](https://crates.io/crates/zip) | Unpacking the ffmpeg release archive | MIT or Apache-2.0 |
 | [serde](https://crates.io/crates/serde), [serde_json](https://crates.io/crates/serde_json), [anyhow](https://crates.io/crates/anyhow) | Reading and writing the library's JSON | MIT or Apache-2.0 |
 | [Overpass](https://github.com/google/fonts/tree/main/ofl/overpass) and [Overpass Mono](https://github.com/google/fonts/tree/main/ofl/overpassmono) | The interface's fonts (bundled into the app by `tools/build_desktop.py --fetch-fonts`) | SIL OFL 1.1 |
-| [Tauri](https://tauri.app) 2 and its dialog and opener plugins | The desktop app's window | MIT or Apache-2.0 |
+| [Tauri](https://tauri.app) 2 and its dialog, opener, notification, autostart and single-instance plugins | The desktop app's window | MIT or Apache-2.0 |
 
 The app's shell, interface pieces, look (Drafting Sheet) and tests follow [Repo Sync](https://github.com/DrFlGd/Repo-Sync), [Model Library](https://github.com/DrFlGd/Model-Library) and [SCAD Workshop](https://github.com/DrFlGd/SCAD-Workshop) (same owner).

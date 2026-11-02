@@ -144,7 +144,7 @@ function Creator({ source, save }) {
   return html`<div class="field">
     <input id="creator-input" type="text" list="creator-names" placeholder="A person or studio with several channels" value=${text} onInput=${(e) => setText(e.target.value)} onBlur=${commit} onKeyDown=${(e) => e.key === "Enter" && (e.preventDefault(), commit())} />
     <datalist id="creator-names">${list.map((c) => html`<option value=${c.name} />`)}</datalist>
-    <p class="hint">Your own grouping of channels, listed in the menu. Leave it empty for none.</p>
+    <p class="hint">Your own grouping of channels, listed in the menu. Leave it empty for none.${source.creator ? html` <a href=${`#/creator/${encodeURIComponent(source.creator)}`} id="creator-link">${source.creator}'s page</a>` : ""}</p>
   </div>`;
 }
 
@@ -218,7 +218,7 @@ export function SourcePage({ id, tab }) {
   };
   const a = s.audit;
   const tabs = [["videos", "Videos", s.videos_kept.length], ["audit", "Audit", a.missing + a.failed || null], ...(s.kind === "channel" ? [["playlists", "Playlists", s.playlists.length]] : [])];
-  return html`<div class="source">
+  return html`<div class="source-page">
     <div class="source-main">
       <header class="repo-head source-head">
         <nav class="crumbs" aria-label="Where"><a href="#/sources">Sources</a><span>/</span><span>${s.kind === "playlist" ? "playlist" : "channel"}</span></nav>
