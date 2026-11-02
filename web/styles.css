@@ -334,6 +334,23 @@ dl.props dd a { color: var(--tool); }
 .thumb .dur { right: 6px; }
 .thumb .res { left: 6px; }
 .card.pending .thumb { border-style: dashed; }
+/* watched, how far, chosen */
+.thumb .seen { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 1px 6px; background: rgba(21, 35, 45, .85); color: #fbfcfb; }
+.thumb .played { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(21, 35, 45, .55); }
+.thumb .played i { display: block; height: 100%; background: var(--tool); }
+.card.video.watched .thumb img { opacity: .62; }
+.card.video.watched .card-title h3 { color: var(--graphite); }
+.card.video .pick { position: absolute; top: 6px; left: 6px; z-index: 2; display: grid; place-items: center; width: 26px; height: 26px; background: var(--white); border: 1px solid var(--steel-2); border-radius: var(--radius); opacity: 0; transition: opacity .12s; cursor: pointer; }
+.card.video:hover .pick, .card.video:focus-within .pick, .card.video.chosen .pick, .page:has(.chosen) .card.video .pick { opacity: 1; }
+.card.video.chosen { outline: 2px solid var(--tool); outline-offset: -1px; }
+table.list tr.chosen td { background: var(--steel); }
+table.list tr.watched .name { color: var(--graphite); }
+.seen-dot { color: var(--ok); font-weight: 700; }
+.selection-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 10px 22px; border-top: 2px solid var(--tool); background: var(--white); }
+.selection-bar .spacer { flex: 1; }
+.selection-bar form.row { display: flex; gap: 6px; }
+.cards.continue { margin-bottom: 18px; }
+.creator-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--graphite); font-size: 14px; margin: 0 0 14px; }
 .cards.sources { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .card.source { min-height: 150px; }
 .avatar { flex: none; display: inline-grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--steel-2); background: var(--steel); color: var(--graphite); overflow: hidden; border-radius: 50%; }
@@ -397,3 +414,16 @@ table.list .actions button { padding: 3px 6px; }
 .creator-head a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
 .creator-head a:hover { color: var(--tool); text-decoration: underline; }
 .creator-head .n { font-family: var(--font-mono); font-size: 11.5px; font-weight: 400; color: var(--graphite); }
+body:has(.selection-bar) .toast { bottom: 100px; }
+.comment-meta { font-size: 12.5px; color: var(--graphite); }
+.comment-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log.said a.hit { display: block; color: var(--ink); text-decoration: none; padding: 2px 0; }
+.log.said a.hit:hover { color: var(--tool); }
+.log.said a.hit .mono { color: var(--tool); margin-right: 6px; }
+.log.said .desc-hit { display: block; font-size: 13px; padding-top: 2px; }
+.view-link { display: flex; align-items: center; }
+.view-link .nav-link { flex: 1; min-width: 0; }
+.view-link .forget { padding: 0 8px; border: 0; background: none; color: var(--graphite); opacity: 0; }
+.view-link:hover .forget, .view-link .forget:focus { opacity: 1; }
+.side-by-side { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 10px; }
+.side-by-side li { display: grid; gap: 4px; font-size: 14px; }

@@ -15,6 +15,8 @@ const what = (j) => (j.type === "add" ? (j.link?.kind === "video" ? "Downloading
   : j.type === "video" ? "Download one video"
   : j.type === "tool" ? "Fetching"
   : j.type === "move" ? "Moving the library"
+  : j.type === "import" ? "Bringing in videos"
+  : j.type === "redownload" ? "Downloading again"
   : j.by === "schedule" ? "Scheduled check" : "Check");
 
 async function stop(job) {
@@ -41,7 +43,12 @@ export function ActivityPage() {
       <div class="panel job-now" id="job-now">${cur ? html`
         <div><b>${what(cur.job)}</b> ${target(cur.job)} <span class="muted">· started ${ago(cur.started)}</span></div>
         <div class="stage">${cur.stage}${cur.place ? ` (${cur.place})` : ""}${pct !== null ? ` · ${bytes(cur.done)} of ${bytes(cur.total)}` : cur.done ? ` · ${bytes(cur.done)}` : ""}${cur.speed ? ` · ${bytes(cur.speed)}/s` : ""}${cur.eta ? ` · ${duration(cur.eta)} left` : ""}</div>
-        <div class=${"meter big" + (pct === null ? " busy" : "")}><i style=${pct === null ? "" : `width:${pct}%`}></i></div>
+        ${cur.downloads?.length > 0 ? html`<ul class="side-by-side" id="side-by-side">${cur.downloads.map((d) => {
+            const p = d.total > 0 ? Math.min(100, (d.done / d.total) * 100) : null;
+            return html`<li key=${d.video} data-video=${d.video}><div><b>${d.title}</b> <span class="muted">· ${d.stage}${p !== null ? ` · ${bytes(d.done)} of ${bytes(d.total)}` : ""}${d.speed ? ` · ${bytes(d.speed)}/s` : ""}</span></div>
+              <div class=${"meter" + (p === null ? " busy" : "")}><i style=${p === null ? "" : `width:${p}%`}></i></div></li>`;
+          })}</ul>`
+          : html`<div class=${"meter big" + (pct === null ? " busy" : "")}><i style=${pct === null ? "" : `width:${pct}%`}></i></div>`}
         <div><button type="button" class="small" id="stop" onClick=${() => stop(cur.job.id)}>${Icon.x(13)} Stop</button></div>`
         : html`<p class="muted">Nothing is downloading.</p>`}</div>
       ${jobs.queued?.length > 0 && html`<h2 class="section-head">Waiting <span class="n">${jobs.queued.length}</span></h2>
@@ -52,7 +59,8 @@ export function ActivityPage() {
       ${jobs.recent?.length ? html`<ul class="log" id="finished">${jobs.recent.map((f) => html`<li key=${f.job.id}>
         <span class="t" title=${when(f.finished)}>${ago(f.finished)}<br />${what(f.job)}</span>
         <span>${target(f.job)}<br /><span class=${!f.ok ? "err" : f.outcome && (f.outcome.downloaded?.length || f.outcome.listed_new) ? "new" : "muted"}>${f.message}</span>
-          ${f.outcome?.failed?.length > 0 && html`<ul class="sublist">${f.outcome.failed.map((x) => html`<li class="err">${x}</li>`)}</ul>`}</span>
+          ${f.outcome?.failed?.length > 0 && html`<ul class="sublist">${f.outcome.failed.map((x) => html`<li class="err">${x}</li>`)}</ul>`}
+          ${f.outcome?.deleted?.length > 0 && html`<ul class="sublist deleted">${f.outcome.deleted.map((x) => html`<li class="muted">${Icon.trash(11)} ${x}</li>`)}</ul>`}</span>
       </li>`)}</ul>` : html`<p class="muted">Nothing has been checked since the app started.</p>`}
     </div>`;
 }

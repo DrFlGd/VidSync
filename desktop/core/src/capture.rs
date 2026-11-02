@@ -21,6 +21,9 @@ pub struct Outcome {
     /// Videos that couldn't be downloaded: "title: why".
     pub failed: Vec<String>,
     pub warnings: Vec<String>,
+    /// Kept videos deleted by "keep only the newest" or "delete watched after": "title (why)".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub deleted: Vec<String>,
     /// What a job that isn't a check did, in words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -40,6 +43,9 @@ impl Outcome {
         }
         if !self.failed.is_empty() {
             parts.push(format!("{} couldn't be downloaded", plural(self.failed.len(), "video")));
+        }
+        if !self.deleted.is_empty() {
+            parts.push(format!("deleted {} as the channel's settings ask", plural(self.deleted.len(), "older or watched video")));
         }
         let mut msg = if parts.is_empty() { "Up to date".to_string() } else { cap(&parts.join(", ")) };
         for w in &self.warnings {
@@ -285,15 +291,15 @@ pub fn clean_partial(partial: &Path) {
 /// Stop) is carried on from, when that try asked for the same quality.
 pub fn download(y: &YtDlp, partial: &Path, video_id: &str, follow: &Follow, progress: &Progress, stage: &Stage) -> Result<Downloaded> {
     let dir = partial.join(video_id);
-    let asked = json!({ "quality": follow.quality.key(), "subtitles": follow.subtitles.trim(), "ffmpeg": y.ffmpeg.is_some() });
+    let asked = json!({ "quality": follow.quality.key(), "subtitles": follow.subtitles.trim(), "ffmpeg": y.ffmpeg.is_some(), "comments": follow.comments });
     let before: Value = std::fs::read(dir.join(TRY_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-    if before.get("quality") != asked.get("quality") || before.get("subtitles") != asked.get("subtitles") || before.get("ffmpeg") != asked.get("ffmpeg") {
+    if before != asked {
         let _ = std::fs::remove_dir_all(&dir);
     }
     std::fs::create_dir_all(&dir).with_context(|| format!("couldn't make {}", dir.display()))?;
     std::fs::write(dir.join(TRY_FILE), serde_json::to_vec(&asked)?)?;
     set_stage(stage, "Downloading");
-    let res = y.download(&sources::video_url(video_id), &dir, follow.quality, &follow.subtitles, progress, stage);
+    let res = y.download(&sources::video_url(video_id), &dir, follow.quality, &follow.subtitles, follow.comments, progress, stage);
     if let Err(e) = res {
         // a half-written file is kept for the next try; otherwise nothing is worth keeping
         let resumable = std::fs::read_dir(&dir).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part"));
@@ -371,7 +377,7 @@ pub fn place(lib: &mut Library, d: Downloaded, video_id: &str, quality: Quality,
         view_count: num(&info["view_count"]) as u64,
         quality: quality.key().to_string(),
         tags: vec![],
-        extra: Default::default(),
+        ..Default::default()
     };
     lib.save_video(&key, &v)?;
     let mut c = lib.channels.get(&key).cloned().context("the channel vanished")?;
@@ -424,6 +430,53 @@ pub fn channel_key_matches(key: &ChannelKey, c: &Channel) -> bool {
 
 /// Remove a video's folder and its record. The playlists keep listing it (the
 /// audit shows it as missing again, or not wanted).
+/// Which listed videos "keep only the newest N" allows: the first N in the
+/// listing (newest first) that are kept or wanted, skipping what's gone or
+/// skipped. None when there's no limit.
+pub fn newest_allowed(upstream: &[Listed], kept: &dyn Fn(&str) -> bool, n: u32) -> Option<std::collections::HashSet<String>> {
+    (n > 0).then(|| upstream.iter().filter(|l| !l.gone && l.state != State::Skipped && (kept(&l.id) || l.state == State::Wanted)).take(n as usize).map(|l| l.id.clone()).collect())
+}
+
+/// What a channel's follow settings say should go: kept videos beyond the newest
+/// `keep_newest` (by date published), and watched ones older than
+/// `drop_watched_days`. A video with one of the user's tags stays. (id, title, why).
+pub fn to_prune(c: &Channel, now: i64) -> Vec<(String, String, String)> {
+    let f = &c.follow;
+    let mut out = vec![];
+    let mut by_date: Vec<&Video> = c.videos.iter().collect();
+    by_date.sort_by(|a, b| b.upload_date.cmp(&a.upload_date).then(b.downloaded.cmp(&a.downloaded)));
+    for (i, v) in by_date.iter().enumerate() {
+        if !v.tags.is_empty() {
+            continue;
+        }
+        if f.keep_newest > 0 && i >= f.keep_newest as usize {
+            out.push((v.id.clone(), v.title.clone(), format!("Deleted: only the newest {} are kept", f.keep_newest)));
+        } else if f.drop_watched_days > 0 && v.watched && unix_from_iso(&v.watched_at).is_some_and(|t| t + f.drop_watched_days as i64 * 86_400 <= now) {
+            out.push((v.id.clone(), v.title.clone(), format!("Deleted: watched more than {} ago", plural(f.drop_watched_days as usize, "day"))));
+        }
+    }
+    out
+}
+
+/// Delete what [`to_prune`] names; the audit keeps listing each, as not wanted
+/// with the reason, so nothing downloads it again. Titles with the reason.
+pub fn prune(lib: &mut Library, key: &str) -> Result<Vec<String>> {
+    let c = lib.channels.get(key).context("That channel isn't in the library.")?;
+    let doomed = to_prune(c, now_unix());
+    let mut out = vec![];
+    for (id, title, why) in doomed {
+        delete_video(lib, key, &id)?;
+        let mut c = lib.channels.get(key).cloned().context("gone")?;
+        if let Some(l) = c.upstream.iter_mut().find(|l| l.id == id) {
+            l.state = State::NotWanted;
+            l.error = why.clone();
+        }
+        lib.put_channel(c)?;
+        out.push(format!("{title} ({})", why.trim_start_matches("Deleted: ")));
+    }
+    Ok(out)
+}
+
 pub fn delete_video(lib: &mut Library, key: &str, video_id: &str) -> Result<()> {
     let mut c = lib.channels.get(key).cloned().context("That channel isn't in the library.")?;
     let i = c.videos.iter().position(|v| v.id == video_id).context("That video isn't in the library.")?;
@@ -452,6 +505,44 @@ pub fn due_at(last_checked: &str, added: &str, every: Option<f64>, s: &library::
     }
     let last = unix_from_iso(last_checked).or_else(|| unix_from_iso(added)).unwrap_or(0);
     Some(last + (hours * 3600.0) as i64)
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn video(id: &str, date: &str) -> Video {
+        Video { id: id.into(), title: id.into(), upload_date: date.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn the_newest_stay_and_old_watched_ones_go() {
+        let mut c = Channel::new(ChannelRef { id: "UC1".into(), handle: "@a".into(), url: String::new() }, true, Follow { keep_newest: 2, ..Follow::default() });
+        c.videos = vec![video("a", "2026-01-01"), video("b", "2026-03-01"), video("c", "2026-02-01"), video("d", "2025-12-01")];
+        c.videos[3].tags = vec!["keep".into()];
+        let gone: Vec<String> = to_prune(&c, now_unix()).into_iter().map(|x| x.0).collect();
+        assert_eq!(gone, vec!["a".to_string()], "the oldest untagged beyond two go; a tagged one stays");
+        c.follow = Follow { drop_watched_days: 7, ..Follow::default() };
+        c.videos[1].set_watched(true);
+        c.videos[2].watched = true;
+        c.videos[2].watched_at = "2026-01-01T00:00:00Z".into();
+        let gone: Vec<String> = to_prune(&c, now_unix()).into_iter().map(|x| x.0).collect();
+        assert_eq!(gone, vec!["c".to_string()], "only what was watched more than a week ago");
+        let up: Vec<Listed> = ["n1", "n2", "n3"].iter().map(|id| Listed { id: id.to_string(), state: State::Wanted, ..Default::default() }).collect();
+        let allowed = newest_allowed(&up, &|_| false, 2).unwrap();
+        assert!(allowed.contains("n1") && allowed.contains("n2") && !allowed.contains("n3"));
+    }
+
+    #[test]
+    fn playing_near_the_end_counts_as_watched() {
+        let mut v = Video { duration: 600.0, ..Default::default() };
+        v.played_to(3.0, false);
+        assert_eq!((v.position, v.watched), (0.0, false));
+        v.played_to(125.04, false);
+        assert_eq!((v.position, v.watched), (125.0, false));
+        v.played_to(580.0, false);
+        assert!(v.watched && v.position == 0.0 && !v.watched_at.is_empty());
+    }
 }
 
 #[cfg(test)]
