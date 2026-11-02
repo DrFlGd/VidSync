@@ -45,11 +45,12 @@ shutil.copytree(ROOT / "tests/fixtures", fx)
 a.out.mkdir(parents=True, exist_ok=True)
 failures = []
 
-# a real two-second video, so the player has something to play; a stub otherwise
+# a real two-second video, so the player has something to play; a stub otherwise.
+# VP8 and Opus, which every Chromium build plays (the Playwright one has no H.264 on Windows)
 if shutil.which("ffmpeg"):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10", "-f", "lavfi", "-i", "sine=frequency=440",
-                    "-t", "2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(fx / "sample.mp4")], check=True)
-REAL_VIDEO = (fx / "sample.mp4").is_file()
+                    "-t", "2", "-pix_fmt", "yuv420p", "-c:v", "libvpx", "-b:v", "200k", "-c:a", "libopus", str(fx / "sample.webm")], check=True)
+REAL_VIDEO = (fx / "sample.webm").is_file()
 
 
 def check(cond, what):
@@ -188,7 +189,7 @@ try:
         check(folders == ["2026-01-01 First video [vid00000001]", "2026-01-03 Third video [vid00000003]"] or len(folders) == 2, f"each video has a dated folder {folders}")
         vdir = lib / DEMO / "videos" / folders[0]
         names = sorted(f.suffix for f in vdir.iterdir())
-        check(".mp4" in names and ".json" in names and ".jpg" in names, f"the media, info and thumbnail are kept together {names}")
+        check((".webm" in names or ".mp4" in names) and ".json" in names and ".jpg" in names, f"the media, info and thumbnail are kept together {names}")
         check(not (lib / "_library/.partial").exists() or not any((lib / "_library/.partial").iterdir()), "nothing is left in the partial folder")
         pl = playlist_json("PLdemo000000000000")
         check([x["id"] for x in pl["upstream"]] == ["vid00000001", "vid00000003"], "the playlist keeps its order")

@@ -9,7 +9,7 @@ without YouTube. Vid Sync runs it when VIDSYNC_YTDLP points at this file.
 <folder>/playlists/<id>.json       {"title", "description", "channel": "<@handle>", "videos": [ids]}
 <folder>/videos/<id>.json          {"title", "duration", "upload_date": "20260101", "channel": "<@handle>",
                                     "view_count", "description", "live_status", "error": "<yt-dlp's error text>"}
-<folder>/sample.mp4                the file every download gets (a few bytes are written when it's missing)
+<folder>/sample.webm or sample.mp4 the file every download gets (a few bytes are written when neither is there)
 
 A test edits these files to simulate a change upstream. It answers what Vid Sync
 asks: --version, -J --flat-playlist <channel tab or playlist>, -J <video>, and a
@@ -181,14 +181,18 @@ tmpl = opt("--progress-template", "")
 tmpl = tmpl.split(":", 1)[1] if tmpl.startswith("download:") else tmpl
 title = re.sub(r'[/\\:*?"<>|]', "_", info["title"])[:120]
 base = f"{title} [{vid}]"
-sample = FIX / "sample.mp4"
-data = sample.read_bytes() if sample.exists() else b"\x00\x00\x00\x1cftypisom" + bytes(2000)
+sample = next((FIX / n for n in ("sample.webm", "sample.mp4") if (FIX / n).exists()), None)
+data = sample.read_bytes() if sample else b"\x00\x00\x00\x1cftypisom" + bytes(2000)
+ext = sample.suffix.lstrip(".") if sample else "mp4"
 if "ba" in (opt("-f", "") or "") and "bv" not in (opt("-f", "") or ""):
     media = dest / f"{base}.m4a"
     info["ext"] = "m4a"
     info["vcodec"] = "none"
 else:
-    media = dest / f"{base}.mp4"
+    media = dest / f"{base}.{ext}"
+    info["ext"] = ext
+    if ext == "webm":
+        info["vcodec"], info["acodec"] = "vp8", "opus"
 delay = float(os.environ.get("VIDSYNC_MOCK_DELAY", "0.3"))
 print(f"[info] {vid}: Downloading 1 format(s): 137+140", flush=True)
 print(f"[download] Destination: {media}", flush=True)
