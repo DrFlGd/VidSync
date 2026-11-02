@@ -52,7 +52,7 @@ A desktop app (Windows first, Linux kept portable; Tauri 2) that keeps a library
 
 ### Next (ideas, not yet chosen by the owner)
 
-See `docs/FUTURE.md` once written: a tray icon so checks run with the window closed; SponsorBlock and chapter-based trimming; watching progress and a "watched" mark; a queue with more than one download; notifications; importing an existing yt-dlp folder; per-creator pages; and an export of the audit.
+See `docs/FUTURE.md` (written 2026-11-02, sized and ordered): a tray icon so checks run with the window closed; SponsorBlock and chapter-based trimming; watching progress and a "watched" mark; a queue with more than one download; notifications; importing an existing yt-dlp folder; per-creator pages; and an export of the audit.
 
 ---
 
