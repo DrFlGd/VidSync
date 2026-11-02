@@ -428,3 +428,15 @@ mod range_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 1536 -> "1.5 KB", for messages.
+pub fn human_bytes(n: u64) -> String {
+    let units = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < units.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 { format!("{n} bytes") } else { format!("{v:.1} {}", units[i]) }
+}

@@ -123,11 +123,13 @@ pub struct Follow {
     pub keep_newest: u32,
     /// Delete a watched video this many days after it was watched (0: never).
     pub drop_watched_days: u32,
+    /// Save the top comments with each video (at most 200, no replies).
+    pub comments: bool,
 }
 
 impl Default for Follow {
     fn default() -> Self {
-        Self { mode: Mode::New, tabs: Tabs::default(), quality: Quality::Best, subtitles: String::new(), every_hours: None, keep_newest: 0, drop_watched_days: 0 }
+        Self { mode: Mode::New, tabs: Tabs::default(), quality: Quality::Best, subtitles: String::new(), every_hours: None, keep_newest: 0, drop_watched_days: 0, comments: false }
     }
 }
 

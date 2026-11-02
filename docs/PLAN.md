@@ -87,4 +87,5 @@ A check: list the source upstream (flat, fast, no video pages), merge into `upst
 ## 5. Phases
 
 1. **0.1**: everything above. Checked in a cloud session with the stand-in for yt-dlp (YouTube itself can't be reached from there), the Rust tests and the acceptance test.
-2. Later, if asked: downloading comments or chapters, more sites yt-dlp knows (the folder layout leaves room: `<host>/channels/…`), the app updating itself. (The tray icon came in 0.2: closing the window leaves the app checking in the tray, unless Settings say quit; a second start shows the first copy's window, so one schedule runs per library.)
+2. **0.2 to 0.5**: the roadmap in `docs/FUTURE.md`, chosen by the owner on 2026-11-02 and built in one go, one pull request each (tray and notices; watched and creator pages; search inside videos; downloads side by side, importing a folder, downloading again). CHANGELOG.md has what each brought.
+3. Later, if asked: downloading comments or chapters, more sites yt-dlp knows (the folder layout leaves room: `<host>/channels/…`), the app updating itself. (The tray icon came in 0.2: closing the window leaves the app checking in the tray, unless Settings say quit; a second start shows the first copy's window, so one schedule runs per library.)

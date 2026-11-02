@@ -6,7 +6,7 @@ import { html, useEffect, useMemo, useRef, useState } from "../lib/html.js";
 import { useStore } from "../lib/store.js";
 import { ui, api, toast, errText, setPref, loadVideos, reloadAll } from "./state.js";
 import { Icon } from "./icons.js";
-import { openAdd, confirmDialog } from "./dialogs.js";
+import { openAdd, confirmDialog, promptDialog } from "./dialogs.js";
 import { checkAll } from "./actions.js";
 import { bytes, ago, when, day, duration, res, plural } from "../lib/format.js";
 
@@ -169,6 +169,30 @@ function Row({ v, list, showChannel }) {
     </tr>`;
 }
 
+/** Where a search is said in videos (their subtitles) or written under them (descriptions). */
+function SaidIn({ found }) {
+  if (!found?.results?.length) return null;
+  const r = found.results;
+  return html`<h2 class="section-head">Said or written in <span class="n">${found.total}</span></h2>
+    <ul class="log said" id="said">${r.map((v) => html`<li key=${v.channel + v.id} data-id=${v.id}>
+      <span class="t"><a href=${videoHref(v)}>${v.title}</a><br />${v.channel_name}</span>
+      <span>
+        ${v.hits.map((h) => html`<a class="hit" href=${`${videoHref(v)}?t=${Math.floor(h.t)}`} title="Play from here"><span class="mono">${duration(h.t)}</span> ${h.text}</a>`)}
+        ${v.hit_count > v.hits.length && html`<span class="muted"> and ${v.hit_count - v.hits.length} more</span>`}
+        ${v.in_description && html`<span class="desc-hit"><span class="muted">Description:</span> ${v.in_description}</span>`}
+      </span></li>`)}</ul>
+    <h2 class="section-head" style="margin-top:20px">In titles, channels and tags</h2>`;
+}
+
+/** Keep what's shown now (filter, search, order) as a named entry in the menu. */
+async function saveView(filter, query, sort) {
+  const name = await promptDialog({ title: "Save this view", body: "It's added to the menu, so the same videos are one click away.", value: [filter?.label || filter?.value, query && `“${query}”`].filter(Boolean).join(" "), ok: "Save the view" });
+  if (!name) return;
+  const views = (ui.get().views || []).filter((v) => v.name !== name);
+  setPref({ views: [...views, { name, filter: filter || null, query: query || "", sort }] });
+  toast(`Saved “${name}”`);
+}
+
 function EmptyLibrary() {
   const [text, setText] = useState("");
   const info = useStore(ui, (s) => s.info);
@@ -192,6 +216,20 @@ export function VideosPage() {
   const downloading = useStore(ui, (s) => s.downloading);
   const info = useStore(ui, (s) => s.info);
   const [query, setQuery] = useState(ui.get().query);
+  const storeQuery = useStore(ui, (s) => s.query);
+  const [found, setFound] = useState(null);
+  // a saved view sets the search from the menu
+  useEffect(() => { if (storeQuery !== typedRef.current) setQuery(storeQuery); }, [storeQuery]);
+  const typedRef = useRef(query);
+  typedRef.current = query;
+  // searching inside subtitles and descriptions too, from three letters on
+  useEffect(() => {
+    const q = storeQuery.trim();
+    if (q.length < 3) { setFound(null); return; }
+    let live = true;
+    api("search_text", { query: q }).then((r) => live && setFound(r)).catch(() => live && setFound(null));
+    return () => { live = false; };
+  }, [storeQuery, totals.count]);
   // the search runs in the backend, a moment after typing stops; leaving the page
   // mid-pause applies what was typed, so the list isn't stale when it's shown again
   const typed = useRef(query);
@@ -213,6 +251,7 @@ export function VideosPage() {
       ${filter && html`<button type="button" class="chip" onClick=${() => ui.set({ filter: null })} title="Show everything">${filter.label || filter.value} ${Icon.x(11)}</button>`}
       <label class="search"><span class="visually-hidden">Search</span>${Icon.search(15)}
         <input id="search" type="search" placeholder="Search titles, channels, tags…" value=${query} onInput=${(e) => setQuery(e.target.value)} /></label>
+      ${(filter || query) && html`<button type="button" class="small ghost" id="save-view" title="Add this view to the menu" onClick=${() => saveView(filter, query.trim(), sort)}>${Icon.plus(12)} Save view</button>`}
       <span class="spacer"></span>
       <select aria-label="Sort by" value=${sort} onChange=${(e) => setPref({ sort: e.target.value })}>
         ${SORTS.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>
@@ -226,7 +265,9 @@ export function VideosPage() {
     <div class="page">
       ${info.ytdlp === false && !empty && html`<p class="notice">yt-dlp wasn't found on this computer, so nothing can be downloaded. <a href="#/settings">Settings</a> can download it.</p>`}
       ${totals.unreadable.length > 0 && html`<p class="notice">${plural(totals.unreadable.length, "folder")} in the library couldn't be read: ${totals.unreadable.map((u) => `${u.folder} (${u.error})`).join("; ")}</p>`}
+      ${!empty && query && html`<${SaidIn} found=${found} />`}
       ${empty ? html`<${EmptyLibrary} />`
+        : list.length === 0 && !downloading && found?.results?.length ? html`<p class="muted">No title, channel or tag matches.</p>`
         : list.length === 0 && !downloading ? html`<p class="muted">Nothing matches${query ? ` “${query}”` : ""}${filter ? ` in ${filter.label || filter.value}` : ""}.</p>`
         : view === "list" ? html`<${Rows} list=${list} sort=${sort} />`
         : html`${going.length > 0 && !filter && !query && html`<h2 class="section-head">Continue watching <span class="n">${going.length}</span></h2>

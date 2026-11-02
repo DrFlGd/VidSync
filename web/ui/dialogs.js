@@ -13,6 +13,11 @@ export function chooseDialog({ title, body, choices }) {
   return new Promise((resolve) => ui.set({ dialog: { type: "choose", title, body, choices, resolve } }));
 }
 
+/** Ask for a short text (a name). Resolves to the text, or null. */
+export function promptDialog({ title, body = "", value = "", ok = "Save", placeholder = "" }) {
+  return new Promise((resolve) => ui.set({ dialog: { type: "prompt", title, body, value, ok, placeholder, resolve } }));
+}
+
 /** Ask before doing something that can't be undone. Resolves true to go ahead. */
 export function confirmDialog({ title, body, ok = "Remove", danger = true }) {
   return new Promise((resolve) => ui.set({ dialog: { type: "confirm", title, body, ok, danger, resolve } }));
@@ -110,6 +115,22 @@ function ConfirmDialog({ d }) {
   </div>`;
 }
 
+function PromptDialog({ d }) {
+  const [v, setV] = useState(d.value || "");
+  const close = (x) => { ui.set({ dialog: null }); d.resolve(x); };
+  const input = useRef(null);
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, []);
+  return html`<form class="dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-title" onSubmit=${(e) => { e.preventDefault(); if (v.trim()) close(v.trim()); }}>
+    <h2 id="prompt-title">${d.title}</h2>
+    ${d.body && html`<p>${d.body}</p>`}
+    <input type="text" id="prompt-input" ref=${input} value=${v} placeholder=${d.placeholder} onInput=${(e) => setV(e.target.value)} style="width:100%" />
+    <div class="buttons">
+      <button type="button" onClick=${() => close(null)}>Cancel</button>
+      <button type="submit" id="prompt-ok" class="primary" disabled=${!v.trim()}>${d.ok}</button>
+    </div>
+  </form>`;
+}
+
 function ChooseDialog({ d }) {
   const close = (v) => { ui.set({ dialog: null }); d.resolve(v); };
   const first = useRef(null);
@@ -127,8 +148,8 @@ function ChooseDialog({ d }) {
 export function Dialogs() {
   const d = useStore(ui, (s) => s.dialog);
   if (!d) return null;
-  const dismiss = (e) => { if (e.target === e.currentTarget) { if (d.resolve) d.resolve(d.type === "choose" ? null : false); ui.set({ dialog: null }); } };
+  const dismiss = (e) => { if (e.target === e.currentTarget) { if (d.resolve) d.resolve(d.type === "choose" || d.type === "prompt" ? null : false); ui.set({ dialog: null }); } };
   return html`<div class="backdrop" onMouseDown=${dismiss}>
-    ${d.type === "add" ? html`<${AddDialog} text=${d.text} />` : d.type === "choose" ? html`<${ChooseDialog} d=${d} />` : html`<${ConfirmDialog} d=${d} />`}
+    ${d.type === "add" ? html`<${AddDialog} text=${d.text} />` : d.type === "choose" ? html`<${ChooseDialog} d=${d} />` : d.type === "prompt" ? html`<${PromptDialog} d=${d} />` : html`<${ConfirmDialog} d=${d} />`}
   </div>`;
 }

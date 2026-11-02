@@ -3,9 +3,9 @@
 // else it is, and what can be done with it.
 import { html, useEffect, useRef, useState } from "../lib/html.js";
 import { useStore } from "../lib/store.js";
-import { ui, api, toast, errText, reloadAll, loadVideos, qualityLabel } from "./state.js";
+import { ui, api, toast, errText, reloadAll, loadVideos, poke, qualityLabel, QUALITIES } from "./state.js";
 import { Icon } from "./icons.js";
-import { confirmDialog } from "./dialogs.js";
+import { confirmDialog, chooseDialog } from "./dialogs.js";
 import { openPath, openUrl } from "./actions.js";
 import { bytes, ago, when, day, duration, count, res } from "../lib/format.js";
 import { Menu } from "./source.js";
@@ -36,7 +36,19 @@ function Tags({ v, reload }) {
   </div>`;
 }
 
-export function VideoPage({ channel, video }) {
+/** Saved comments (Follow → Save the top comments), most liked first as YouTube gave them. */
+function Comments({ list, total }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? list : list.slice(0, 20);
+  return html`<h2 class="section-head">Comments <span class="n">${list.length}${total > list.length ? ` of ${count(total)}` : ""}</span></h2>
+    <ul class="log comments" id="comments">${shown.map((c, i) => html`<li key=${i}>
+      <span class="t">${c.author || "Someone"}${c.by_uploader ? html`<br /><span class="badge ok">channel</span>` : ""}${c.pinned ? html`<br /><span class="badge">pinned</span>` : ""}</span>
+      <span><span class="comment-text">${c.text}</span><br /><span class="comment-meta">${c.likes ? `${count(c.likes)} likes · ` : ""}${c.when ? day(c.when.slice(0, 10)) : ""}</span></span>
+    </li>`)}</ul>
+    ${list.length > shown.length && html`<p><button type="button" class="small" id="more-comments" onClick=${() => setAll(true)}>Show all ${list.length}</button></p>`}`;
+}
+
+export function VideoPage({ channel, video, t = null }) {
   const [v, setV] = useState(null);
   const [err, setErr] = useState("");
   const [playErr, setPlayErr] = useState("");
@@ -59,12 +71,15 @@ export function VideoPage({ channel, video }) {
   const media = {
     onLoadedMetadata: (e) => {
       const el = e.currentTarget;
+      if (t != null && t >= 0) { el.currentTime = t; return; }
       if (v && !v.watched && v.position > 5 && v.position < (el.duration || Infinity) - 5) { el.currentTime = v.position; setResumed(v.position); }
     },
     onTimeUpdate: () => { if (Date.now() - sent.current.at > 10000) report(); },
     onPause: () => report(),
     onEnded: () => report(true),
   };
+  // a link to a moment (a search hit) on the page already open: go there
+  useEffect(() => { if (t != null && player.current && player.current.readyState >= 1) { player.current.currentTime = t; player.current.play?.().catch(() => {}); } }, [t]);
   const setWatched = async (on) => {
     try { await api("videos_watched", { items: [{ channel, video }], watched: on }); await reload(); loadVideos(); } catch (e) { toast(errText(e), 6000); }
   };
@@ -74,6 +89,15 @@ export function VideoPage({ channel, video }) {
   const del = async () => {
     if (!(await confirmDialog({ title: "Delete this video?", body: `${v.title} (${bytes(v.bytes)}) is deleted from the library folder. Its channel and playlists still list it in the audit, so it can be downloaded again.`, ok: "Delete the video" }))) return;
     try { await api("video_delete", { channel, video }); await reloadAll(); toast("Deleted"); location.hash = `#/source/${encodeURIComponent(v.source)}`; } catch (e) { toast(errText(e), 6000); }
+  };
+  const again = async () => {
+    const quality = await chooseDialog({
+      title: "Download it again?",
+      body: `${v.title} is kept at ${res(v) || qualityLabel(v.quality).toLowerCase()} (${bytes(v.bytes)}). A new copy is downloaded in the quality you pick; your tags and where you stopped carry over, and the old copy is deleted only once the new one is in.${ui.get().info.ffmpeg === false ? " Without ffmpeg (Settings), YouTube offers a single file only up to 720p." : ""}`,
+      choices: QUALITIES.map(([k, l]) => ({ value: k, label: l, cls: k === "best" ? "primary" : "" })),
+    });
+    if (!quality) return;
+    try { await api("video_redownload", { channel, video, quality }); toast(`Downloading ${v.title} again…`); poke(); } catch (e) { toast(errText(e), 6000); }
   };
   const seek = (t) => { if (player.current) { player.current.currentTime = t; player.current.play?.(); } };
   return html`<div class="source-page video-page">
@@ -105,6 +129,7 @@ export function VideoPage({ channel, video }) {
           <button type="button" onClick=${() => openUrl(v.web_url)} title=${v.web_url}>${Icon.external(15)} YouTube</button>
           <${Menu} id="video-more" label=${Icon.dots(16)} title="More" align="left">
             <button type="button" onClick=${() => navigator.clipboard?.writeText(v.web_url).then(() => toast("Link copied"))}>Copy the link</button>
+            <button type="button" id="redownload" onClick=${again}>${Icon.download(14)} Download again in another quality…</button>
             <div class="sep"></div>
             <button type="button" class="danger" id="delete-video" onClick=${del}>${Icon.trash(14)} Delete from the library…</button>
           </${Menu}>
@@ -114,6 +139,7 @@ export function VideoPage({ channel, video }) {
       <div class="panel"><${Description} text=${v.description} /></div>
       ${v.chapters?.length > 0 && html`<h2 class="section-head">Chapters <span class="n">${v.chapters.length}</span></h2>
         <ul class="log chapters">${v.chapters.map((c, i) => html`<li key=${i}><button type="button" class="ghost small mono" onClick=${() => seek(c.start)}>${duration(c.start)}</button><span>${c.title}</span></li>`)}</ul>`}
+      ${v.comments?.length > 0 && html`<${Comments} list=${v.comments} total=${v.comment_count || 0} />`}
     </div>
     <aside class="inspector" aria-label="Details">
       <section><h2>Details</h2>

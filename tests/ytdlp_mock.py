@@ -12,7 +12,10 @@ without YouTube. Vid Sync runs it when VIDSYNC_YTDLP points at this file.
                                     "needs_cookies": true (age restricted: only with Firefox's cookies or a cookies file),
                                     "bot_check": true (YouTube asks to confirm it isn't a bot, unless cookies are given),
                                     "break_once": true (the first download is cut off half way, leaving a .part file;
-                                                        the next one carries on and says where from in its .info.json)}
+                                                        the next one carries on and says where from in its .info.json),
+                                    "cues": [[start, end, "text"], ...] (the subtitles written with --write-subs),
+                                    "comments": [{"author", "text", "like_count", ...}] (written with --write-comments),
+                                    "delay": seconds a download of it takes}
 <folder>/sample.webm or sample.mp4 the file every download gets (a few bytes are written when neither is there)
 
 A test edits these files to simulate a change upstream. It answers what Vid Sync
@@ -212,7 +215,7 @@ else:
     info["ext"] = ext
     if ext == "webm":
         info["vcodec"], info["acodec"] = "vp8", "opus"
-delay = float(os.environ.get("VIDSYNC_MOCK_DELAY", "0.3"))
+delay = float(v.get("delay") or os.environ.get("VIDSYNC_MOCK_DELAY", "0.3"))
 print(f"[info] {vid}: Downloading 1 format(s): 137+140", flush=True)
 print(f"[download] Destination: {media}", flush=True)
 total = len(data)
@@ -239,8 +242,14 @@ for i in range(first, steps + 1):
     time.sleep(delay / steps)
 print(f"[Merger] Merging formats into \"{media}\"", flush=True)
 media.write_bytes(data)
+if "--write-comments" in args:
+    info["comments"] = [{"parent": "root", "timestamp": 1767225600, **c} for c in v.get("comments", [])]
+    info["comment_count"] = len(info["comments"])
 (dest / f"{base}.info.json").write_text(json.dumps(info), encoding="utf-8")
 pic = FIX / "thumb.png"
 (dest / f"{base}.jpg").write_bytes(pic.read_bytes() if pic.exists() else b"")
 if "--write-subs" in args:
-    (dest / f"{base}.en.vtt").write_text("WEBVTT\n\n00:00.000 --> 00:01.000\nHello\n", encoding="utf-8")
+    def vtt_time(t):
+        return f"{int(t // 3600):02d}:{int(t % 3600 // 60):02d}:{t % 60:06.3f}"
+    cues = v.get("cues") or [[0, 1, "Hello"]]
+    (dest / f"{base}.en.vtt").write_text("WEBVTT\n\n" + "".join(f"{vtt_time(a)} --> {vtt_time(b)}\n{t}\n\n" for a, b, t in cues), encoding="utf-8")

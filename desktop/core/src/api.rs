@@ -6,7 +6,7 @@
 use crate::capture::{self, plural, Outcome};
 use crate::config::{AppConfig, Cookies, Polite, Prefs};
 use crate::http::{Client, Progress};
-use crate::library::{self, audit, source_id, split_id, Audit, Channel, Follow, Kind, Library, Listed, Mode, Playlist, PlaylistRef, Settings, State, Video, VIDEOS_DIR};
+use crate::library::{self, audit, source_id, split_id, Audit, Channel, Follow, Kind, Library, Listed, Mode, Playlist, PlaylistRef, Quality, Settings, State, Video, VIDEOS_DIR};
 use crate::sources::{self, Link};
 use crate::tools;
 use crate::util::{now_iso, now_unix, percent_encode};
@@ -40,6 +40,10 @@ pub enum JobKind {
     Tool { name: String },
     /// Move the whole library folder to another place, then open it there.
     Move { to: String },
+    /// Bring in videos yt-dlp downloaded elsewhere ("move" or "copy" their files).
+    Import { path: String, mode: String },
+    /// Download a kept video again in another quality; the old copy goes once the new one is in.
+    Redownload { channel: String, video: String, quality: Quality },
 }
 
 impl JobKind {
@@ -48,6 +52,7 @@ impl JobKind {
             (JobKind::Video { video: a, .. }, JobKind::Video { video: b, .. }) => a == b,
             (JobKind::Video { .. }, _) | (_, JobKind::Video { .. }) => false,
             (JobKind::Tool { name: a }, JobKind::Tool { name: b }) => a == b,
+            (JobKind::Redownload { video: a, .. }, JobKind::Redownload { video: b, .. }) => a == b,
             _ => true,
         }
     }
@@ -83,6 +88,17 @@ struct Running {
     stage: Arc<Stage>,
     /// "title" of the video in hand and its place in the run ("3 of 7").
     item: Arc<Mutex<(String, String)>>,
+    /// The downloads going side by side (Settings → downloads at once).
+    slots: Arc<Mutex<Vec<Slot>>>,
+}
+
+/// One of the downloads going side by side.
+#[derive(Clone)]
+struct Slot {
+    video: String,
+    title: String,
+    progress: Arc<Progress>,
+    stage: Arc<Stage>,
 }
 
 #[derive(Default)]
@@ -111,6 +127,9 @@ pub struct App {
     notifier: Mutex<Option<Notifier>>,
     /// The last cookies test: {"state": "testing"|"ok"|"failed", "message", "at"}.
     cookie_test: Arc<Mutex<Value>>,
+    /// Each kept video's subtitles and description, read on the first search:
+    /// "channel/id" -> (what it was read from, the text).
+    texts: Mutex<std::collections::HashMap<String, (String, Arc<crate::textsearch::Doc>)>>,
 }
 
 /// Shows a system notice: (title, text).
@@ -140,6 +159,7 @@ impl App {
             paused_until: Mutex::new(0),
             notifier: Mutex::new(None),
             cookie_test: Arc::new(Mutex::new(Value::Null)),
+            texts: Mutex::default(),
         });
         let path = app.config.lock().unwrap().library_path();
         app.open_library(path);
@@ -157,6 +177,7 @@ impl App {
         match Library::open(&path) {
             Ok(l) => {
                 capture::clean_partial(&l.partial_dir());
+                self.texts.lock().unwrap().clear();
                 *self.lib.lock().unwrap() = Some(l);
                 *self.lib_error.lock().unwrap() = None;
                 let mut c = self.config.lock().unwrap();
@@ -311,6 +332,7 @@ impl App {
                 Ok(json!({ "job": self.enqueue(JobKind::Tool { name: name.clone() }, format!("tool:{name}"), name, "you") }))
             }
             "videos" => self.videos(a["query"].as_str().unwrap_or("")),
+            "search_text" => self.search_text(a["query"].as_str().unwrap_or("")),
             "video" => self.video(a["channel"].as_str().context("no channel given")?, &vid()?),
             "sources" => self.sources(),
             "source" => self.source(&id()?),
@@ -485,10 +507,10 @@ impl App {
             }
             "videos_delete" => {
                 let items = items_of(&a["items"])?;
-                let busy = self.jobs.lock().unwrap().current.as_ref().map(|c| c.item.lock().unwrap().0.clone()).unwrap_or_default();
+                let busy = self.busy_videos();
                 let mut n = 0;
                 for (key, video) in items {
-                    if video == busy {
+                    if busy.contains(&video) {
                         continue;
                     }
                     self.with_lib(|l| capture::delete_video(l, &key, &video))?;
@@ -496,11 +518,26 @@ impl App {
                 }
                 Ok(json!({ "deleted": n }))
             }
+            "import_scan" => self.import_scan(Path::new(a["path"].as_str().context("no folder given")?)),
+            "import_run" => {
+                let path = a["path"].as_str().context("no folder given")?.to_string();
+                let mode = if a["mode"].as_str() == Some("copy") { "copy" } else { "move" }.to_string();
+                self.ytdlp()?;
+                Ok(json!({ "job": self.enqueue(JobKind::Import { path: path.clone(), mode }, format!("import:{path}"), format!("Importing from {path}"), "you") }))
+            }
+            "video_redownload" => {
+                let key = a["channel"].as_str().context("no channel given")?.to_string();
+                let video = vid()?;
+                let quality: Quality = serde_json::from_value(a["quality"].clone()).context("that quality isn't known")?;
+                let title = self.with_lib(|l| l.channels.get(&key).and_then(|c| c.videos.iter().find(|v| v.id == video)).map(|v| v.title.clone()).context("That video isn't in the library."))?;
+                self.ytdlp()?;
+                Ok(json!({ "job": self.enqueue(JobKind::Redownload { channel: key, video: video.clone(), quality }, format!("video:{video}"), format!("{title} ({})", quality.label().to_lowercase()), "you") }))
+            }
             "remove" => self.remove(&id()?),
             "video_delete" => {
                 let key = a["channel"].as_str().context("no channel given")?.to_string();
                 let video = vid()?;
-                if self.jobs.lock().unwrap().current.as_ref().is_some_and(|c| c.item.lock().unwrap().0 == video) {
+                if self.busy_videos().contains(&video) {
                     bail!("That video is downloading: stop it first.");
                 }
                 self.with_lib(|l| capture::delete_video(l, &key, &video))?;
@@ -513,6 +550,9 @@ impl App {
                 if let Some(c) = &j.current {
                     if job.is_none() || job == Some(c.job.id) {
                         c.progress.stop.store(true, Ordering::Relaxed);
+                        for s in c.slots.lock().unwrap().iter() {
+                            s.progress.stop.store(true, Ordering::Relaxed);
+                        }
                     }
                 }
                 if let Some(job) = job {
@@ -533,6 +573,21 @@ impl App {
             }
             other => bail!("unknown command {other}"),
         }
+    }
+
+    /// The videos being downloaded right now.
+    fn busy_videos(&self) -> Vec<String> {
+        let j = self.jobs.lock().unwrap();
+        let Some(c) = j.current.as_ref() else { return vec![] };
+        let mut v: Vec<String> = c.slots.lock().unwrap().iter().map(|s| s.video.clone()).collect();
+        let main = c.item.lock().unwrap().0.clone();
+        if !main.is_empty() {
+            v.push(main);
+        }
+        if let JobKind::Redownload { video, .. } = &c.job.kind {
+            v.push(video.clone());
+        }
+        v
     }
 
     /// Change several kept videos the same way ([{channel, video}, …]), saving each video.json.
@@ -582,6 +637,7 @@ impl App {
             "polite": cfg.polite,
             "quit_on_close": cfg.quit_on_close,
             "notices_off": cfg.notices_off,
+            "parallel": cfg.parallel.max(1),
             "cookie_test_video": sources::video_url(COOKIE_TEST_VIDEO),
         }))
     }
@@ -613,6 +669,9 @@ impl App {
             }
             if let Some(b) = a["notices_off"].as_bool() {
                 c.notices_off = b;
+            }
+            if let Some(n) = a["parallel"].as_u64() {
+                c.parallel = n.clamp(1, 3) as u32;
             }
             c.save(&self.paths.config_dir.join("config.json"))?;
         }
@@ -729,6 +788,49 @@ impl App {
         })
     }
 
+    /// Videos whose subtitles or description hold a phrase: where it's said
+    /// (seconds and the line), how often, and a bit of the description.
+    fn search_text(&self, query: &str) -> Result<Value> {
+        let phrase = crate::textsearch::normalise(query);
+        if phrase.chars().count() < 3 {
+            return Ok(json!({ "query": query, "results": [], "videos_searched": 0 }));
+        }
+        self.with_lib(|l| {
+            let mut results = vec![];
+            let mut searched = 0;
+            let mut texts = self.texts.lock().unwrap();
+            for c in l.channels.values() {
+                let dir = l.channel_folder(&c.key()).join(VIDEOS_DIR);
+                for v in &c.videos {
+                    let key = format!("{}/{}", c.key(), v.id);
+                    let stamp = format!("{}|{}|{}", v.folder, v.downloaded, v.subtitles.join(","));
+                    let doc = match texts.get(&key) {
+                        Some((st, d)) if *st == stamp => d.clone(),
+                        _ => {
+                            let d = Arc::new(crate::textsearch::Doc::load(&dir.join(&v.folder), v));
+                            texts.insert(key, (stamp, d.clone()));
+                            d
+                        }
+                    };
+                    searched += 1;
+                    let (hits, count, snippet) = doc.find(&phrase, 5);
+                    if count > 0 || snippet.is_some() {
+                        let mut s = self.video_summary(l, c, v);
+                        s["hits"] = json!(hits);
+                        s["hit_count"] = json!(count);
+                        s["in_description"] = json!(snippet);
+                        results.push(s);
+                    }
+                }
+            }
+            // most said first, then newest
+            results.sort_by(|a, b| b["hit_count"].as_u64().cmp(&a["hit_count"].as_u64()).then_with(|| b["upload_date"].as_str().cmp(&a["upload_date"].as_str())));
+            let total = results.len();
+            results.truncate(100);
+            Ok(json!({ "query": query, "results": results, "total": total, "videos_searched": searched }))
+        })
+    }
+
     fn video(&self, key: &str, video: &str) -> Result<Value> {
         self.with_lib(|l| {
             let c = l.channels.get(key).context("That channel isn't in the library.")?;
@@ -745,6 +847,16 @@ impl App {
             s["vcodec"] = json!(if v.vcodec.is_empty() { info["vcodec"].as_str().unwrap_or("") } else { &v.vcodec });
             s["acodec"] = json!(if v.acodec.is_empty() { info["acodec"].as_str().unwrap_or("") } else { &v.acodec });
             s["format"] = json!(info["format"].as_str().unwrap_or(""));
+            // top comments, when they were saved (Follow → Comments)
+            s["comments"] = json!(info["comments"].as_array().map(|a| a.iter().filter(|c| c["parent"].as_str().unwrap_or("root") == "root").take(200).map(|c| json!({
+                "author": c["author"].as_str().unwrap_or(""),
+                "text": c["text"].as_str().unwrap_or(""),
+                "likes": c["like_count"].as_u64().unwrap_or(0),
+                "when": c["timestamp"].as_i64().map(crate::util::iso_from_unix),
+                "pinned": c["is_pinned"].as_bool().unwrap_or(false),
+                "by_uploader": c["author_is_uploader"].as_bool().unwrap_or(false),
+            })).collect::<Vec<_>>()));
+            s["comment_count"] = info["comment_count"].clone();
             s["chapters"] = json!(info["chapters"].as_array().map(|a| a.iter().map(|ch| json!({ "title": ch["title"], "start": ch["start_time"] })).collect::<Vec<_>>()).unwrap_or_default());
             s["path"] = json!(dir.display().to_string());
             s["web_url"] = json!(sources::video_url(video));
@@ -834,7 +946,7 @@ impl App {
         let waiting = {
             let j = self.jobs.lock().unwrap();
             j.queue.iter().chain(j.current.as_ref().map(|c| &c.job)).any(|q| matches!(&q.kind, JobKind::Video { video, .. } if *video == x.id))
-                || j.current.as_ref().is_some_and(|c| c.item.lock().unwrap().0 == x.id)
+                || j.current.as_ref().is_some_and(|c| c.item.lock().unwrap().0 == x.id || c.slots.lock().unwrap().iter().any(|s| s.video == x.id))
         };
         let mut v = serde_json::to_value(x).unwrap_or(Value::Null);
         v["kept"] = kept.unwrap_or(Value::Null);
@@ -1064,6 +1176,15 @@ impl App {
                     "total": c.progress.total.load(Ordering::Relaxed),
                     "speed": c.progress.speed.load(Ordering::Relaxed),
                     "eta": c.progress.eta.load(Ordering::Relaxed),
+                    "downloads": c.slots.lock().unwrap().iter().map(|s| json!({
+                        "video": s.video,
+                        "title": s.title,
+                        "stage": *s.stage.lock().unwrap(),
+                        "done": s.progress.done.load(Ordering::Relaxed),
+                        "total": s.progress.total.load(Ordering::Relaxed),
+                        "speed": s.progress.speed.load(Ordering::Relaxed),
+                        "eta": s.progress.eta.load(Ordering::Relaxed),
+                    })).collect::<Vec<_>>(),
                 })
             }),
             "queued": j.queue,
@@ -1073,7 +1194,7 @@ impl App {
 
     fn work(self: Arc<Self>) {
         loop {
-            let (job, progress, stage, item) = {
+            let (job, progress, stage, item, slots) = {
                 let mut j = self.jobs.lock().unwrap();
                 while j.queue.is_empty() {
                     j = self.wake.wait(j).unwrap();
@@ -1082,10 +1203,11 @@ impl App {
                 let progress = Arc::new(Progress::default());
                 let stage = Arc::new(Mutex::new(String::from("Starting")));
                 let item = Arc::new(Mutex::new((String::new(), String::new())));
-                j.current = Some(Running { job: job.clone(), started: now_iso(), progress: progress.clone(), stage: stage.clone(), item: item.clone() });
-                (job, progress, stage, item)
+                let slots: Arc<Mutex<Vec<Slot>>> = Arc::default();
+                j.current = Some(Running { job: job.clone(), started: now_iso(), progress: progress.clone(), stage: stage.clone(), item: item.clone(), slots: slots.clone() });
+                (job, progress, stage, item, slots)
             };
-            let run = Run { progress: &progress, stage: &stage, item: &item };
+            let run = Run { progress: &progress, stage: &stage, item: &item, slots: &slots };
             let res = match &job.kind {
                 JobKind::Add { link, follow } => self.run_add(link, follow, &run),
                 JobKind::Check { id } => self.run_check(id, false, &run),
@@ -1093,6 +1215,8 @@ impl App {
                 JobKind::Video { id, video } => self.run_video(id, video, &run),
                 JobKind::Tool { name } => self.run_tool(name, &run),
                 JobKind::Move { to } => self.run_move(to, &run),
+                JobKind::Import { path, mode } => self.run_import(path, mode == "copy", &run),
+                JobKind::Redownload { channel, video, quality } => self.run_redownload(channel, video, *quality, &run),
             };
             let mut j = self.jobs.lock().unwrap();
             j.current = None;
@@ -1406,36 +1530,41 @@ impl App {
             return Ok(out);
         }
         let n = list.len();
-        for (i, x) in list.iter().enumerate() {
-            *run.item.lock().unwrap() = (x.id.clone(), format!("{} of {n}", i + 1));
-            set_stage(run.stage, format!("Downloading {}", x.title));
-            match capture::download(&y, &partial, &x.id, &follow, run.progress, run.stage) {
-                Ok(d) => match self.with_lib(|l| capture::place(l, d, &x.id, follow.quality, Some(x))) {
-                    Ok((_, v)) => {
-                        out.downloaded.push(v.title);
-                        let _ = self.edit_source(id, |c, p| {
-                            if let Some(c) = c {
-                                c.last_changed = now_iso();
-                            }
-                            if let Some(p) = p {
-                                p.last_changed = now_iso();
-                            }
-                            Ok(())
-                        });
-                    }
-                    Err(e) => out.warnings.push(format!("{}: {e:#}", x.title)),
-                },
-                Err(e) => {
-                    if run.progress.stopped() {
-                        return Err(e);
-                    }
-                    let why = format!("{e:#}");
-                    let _ = self.set_state(id, &x.id, State::Failed, &why);
-                    out.failed.push(format!("{}: {why}", x.title));
-                    if why.contains(BOT_CHECK) && i + 1 < n {
-                        let left = n - i - 1;
-                        out.warnings.push(format!("Stopped after YouTube asked for a sign-in; {} {} for the next check.", plural(left, "video"), if left == 1 { "waits" } else { "wait" }));
-                        break;
+        let at_once = (self.config.lock().unwrap().parallel.max(1) as usize).min(3);
+        if at_once > 1 && n > 1 {
+            out = self.download_side_by_side(id, &y, &list, &follow, &partial, at_once, run)?;
+        } else {
+            for (i, x) in list.iter().enumerate() {
+                *run.item.lock().unwrap() = (x.id.clone(), format!("{} of {n}", i + 1));
+                set_stage(run.stage, format!("Downloading {}", x.title));
+                match capture::download(&y, &partial, &x.id, &follow, run.progress, run.stage) {
+                    Ok(d) => match self.with_lib(|l| capture::place(l, d, &x.id, follow.quality, Some(x))) {
+                        Ok((_, v)) => {
+                            out.downloaded.push(v.title);
+                            let _ = self.edit_source(id, |c, p| {
+                                if let Some(c) = c {
+                                    c.last_changed = now_iso();
+                                }
+                                if let Some(p) = p {
+                                    p.last_changed = now_iso();
+                                }
+                                Ok(())
+                            });
+                        }
+                        Err(e) => out.warnings.push(format!("{}: {e:#}", x.title)),
+                    },
+                    Err(e) => {
+                        if run.progress.stopped() {
+                            return Err(e);
+                        }
+                        let why = format!("{e:#}");
+                        let _ = self.set_state(id, &x.id, State::Failed, &why);
+                        out.failed.push(format!("{}: {why}", x.title));
+                        if why.contains(BOT_CHECK) && i + 1 < n {
+                            let left = n - i - 1;
+                            out.warnings.push(format!("Stopped after YouTube asked for a sign-in; {} {} for the next check.", plural(left, "video"), if left == 1 { "waits" } else { "wait" }));
+                            break;
+                        }
                     }
                 }
             }
@@ -1445,6 +1574,245 @@ impl App {
             out.deleted = self.with_lib(|l| capture::prune(l, key))?;
         }
         Ok(out)
+    }
+
+    /// Download a list of videos a few at a time (Settings → downloads at once),
+    /// each in its own slot that Activity shows; placing each in the library
+    /// still goes one at a time.
+    #[allow(clippy::too_many_arguments)]
+    fn download_side_by_side(&self, id: &str, y: &YtDlp, list: &[Listed], follow: &Follow, partial: &Path, at_once: usize, run: &Run) -> Result<Outcome> {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let n = list.len();
+        let next = AtomicUsize::new(0);
+        let finished = AtomicUsize::new(0);
+        let hold = AtomicBool::new(false);
+        let out = Mutex::new(Outcome::default());
+        set_stage(run.stage, format!("Downloading {at_once} at a time"));
+        std::thread::scope(|s| {
+            for _ in 0..at_once.min(n) {
+                s.spawn(|| loop {
+                    if run.progress.stopped() || hold.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(x) = list.get(i) else { break };
+                    let slot = Slot { video: x.id.clone(), title: x.title.clone(), progress: Arc::new(Progress::default()), stage: Arc::new(Mutex::new("Starting".into())) };
+                    run.slots.lock().unwrap().push(slot.clone());
+                    if run.progress.stopped() {
+                        slot.progress.stop.store(true, Ordering::Relaxed);
+                    }
+                    let res = capture::download(y, partial, &x.id, follow, &slot.progress, &slot.stage);
+                    run.slots.lock().unwrap().retain(|s| s.video != x.id);
+                    let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                    *run.item.lock().unwrap() = (String::new(), format!("{done} of {n} done"));
+                    match res {
+                        Ok(d) => match self.with_lib(|l| capture::place(l, d, &x.id, follow.quality, Some(x))) {
+                            Ok((_, v)) => {
+                                out.lock().unwrap().downloaded.push(v.title);
+                                let _ = self.edit_source(id, |c, p| {
+                                    if let Some(c) = c {
+                                        c.last_changed = now_iso();
+                                    }
+                                    if let Some(p) = p {
+                                        p.last_changed = now_iso();
+                                    }
+                                    Ok(())
+                                });
+                            }
+                            Err(e) => out.lock().unwrap().warnings.push(format!("{}: {e:#}", x.title)),
+                        },
+                        Err(e) => {
+                            if run.progress.stopped() {
+                                break;
+                            }
+                            let why = format!("{e:#}");
+                            let _ = self.set_state(id, &x.id, State::Failed, &why);
+                            out.lock().unwrap().failed.push(format!("{}: {why}", x.title));
+                            if why.contains(BOT_CHECK) {
+                                hold.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        if run.progress.stopped() {
+            bail!("Stopped.");
+        }
+        let mut out = out.into_inner().unwrap();
+        let left = n.saturating_sub(finished.load(Ordering::Relaxed));
+        if hold.load(Ordering::Relaxed) && left > 0 {
+            out.warnings.push(format!("Stopped after YouTube asked for a sign-in; {} {} for the next check.", plural(left, "video"), if left == 1 { "waits" } else { "wait" }));
+        }
+        Ok(out)
+    }
+
+    /// What a folder of videos yt-dlp downloaded elsewhere holds, for the Import dialog.
+    fn import_scan(&self, p: &Path) -> Result<Value> {
+        if !p.is_dir() {
+            bail!("{} isn't a folder.", p.display());
+        }
+        let root = self.with_lib(|l| Ok(l.root.clone()))?;
+        let canon = |x: &Path| std::fs::canonicalize(x).unwrap_or_else(|_| x.to_path_buf());
+        if canon(p).starts_with(canon(&root)) {
+            bail!("That folder is inside the library already.");
+        }
+        let found = crate::import::scan(p, Some(&root), 6)?;
+        let have: Vec<bool> = self.with_lib(|l| Ok(found.iter().map(|f| l.has_video(&f.id)).collect()))?;
+        let videos: Vec<Value> = found.iter().zip(&have).map(|(f, h)| {
+            let mut v = serde_json::to_value(f).unwrap_or(Value::Null);
+            v["in_library"] = json!(h);
+            v
+        }).collect();
+        let new: Vec<&crate::import::Found> = found.iter().zip(&have).filter(|(_, h)| !**h).map(|(f, _)| f).collect();
+        Ok(json!({
+            "path": p.display().to_string(),
+            "videos": videos,
+            "count": found.len(),
+            "new": new.len(),
+            "new_bytes": new.iter().map(|f| f.bytes).sum::<u64>(),
+            "without_info": new.iter().filter(|f| !f.has_info).count(),
+            "already": found.len() - new.len(),
+        }))
+    }
+
+    /// Move or copy each video found in a folder into its channel's folder. One
+    /// without its `.info.json` is read from YouTube first (its channel has to be known).
+    fn run_import(&self, path: &str, copy: bool, run: &Run) -> Result<Outcome> {
+        let y = self.ytdlp()?;
+        let root = self.with_lib(|l| Ok(l.root.clone()))?;
+        set_stage(run.stage, format!("Looking through {path}"));
+        let found = crate::import::scan(Path::new(path), Some(&root), 6)?;
+        let partial = self.with_lib(|l| Ok(l.partial_dir()))?;
+        let todo: Vec<crate::import::Found> = self.with_lib(|l| Ok(found.into_iter().filter(|f| !l.has_video(&f.id)).collect()))?;
+        let mut out = Outcome::default();
+        let n = todo.len();
+        run.progress.total.store(n as u64, Ordering::Relaxed);
+        let mut brought = 0;
+        for (i, f) in todo.iter().enumerate() {
+            if run.progress.stopped() {
+                bail!("Stopped after {} of {n}.", plural(brought, "video"));
+            }
+            run.progress.done.store(i as u64, Ordering::Relaxed);
+            *run.item.lock().unwrap() = (f.id.clone(), format!("{} of {n}", i + 1));
+            set_stage(run.stage, format!("{} {}", if copy { "Copying" } else { "Moving" }, f.title));
+            // its details: the .info.json beside it, or YouTube's answer now
+            let info = match &f.info {
+                Some(i) => i.clone(),
+                None => {
+                    set_stage(run.stage, format!("Asking YouTube about {}", f.title));
+                    match y.info(&sources::video_url(&f.id), run.progress) {
+                        Ok(i) => i,
+                        Err(e) => {
+                            out.failed.push(format!("{}: {e:#} (its channel isn't known without it, so it stays where it is)", f.title));
+                            continue;
+                        }
+                    }
+                }
+            };
+            let dir = partial.join(format!("import-{}", f.id));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir)?;
+            let mut moved = vec![];
+            let mut err = None;
+            for name in &f.files {
+                match crate::import::bring(&f.dir.join(name), &dir.join(name), copy) {
+                    Ok(()) => moved.push(name.clone()),
+                    Err(e) => {
+                        err = Some(e);
+                        break;
+                    }
+                }
+            }
+            if f.info.is_none() {
+                let media = f.files.iter().filter(|n| !n.ends_with(".info.json")).max_by_key(|n| std::fs::metadata(dir.join(n)).map(|m| m.len()).unwrap_or(0));
+                let stem = media.and_then(|m| m.rsplit_once('.').map(|x| x.0.to_string())).unwrap_or_else(|| f.id.clone());
+                let _ = std::fs::write(dir.join(format!("{stem}.info.json")), serde_json::to_vec(&info)?);
+            }
+            let placed = match err {
+                Some(e) => Err(e),
+                None => crate::ytdlp::sort_files(&dir).and_then(|(media, info_file, picture, subtitles)| {
+                    let media = media.context("no video file came over")?;
+                    let d = capture::Downloaded { dir: dir.clone(), info: info.clone(), media, info_file: info_file.unwrap_or_default(), picture: picture.unwrap_or_default(), subtitles };
+                    self.with_lib(|l| capture::place(l, d, &f.id, Quality::Best, None))
+                }),
+            };
+            match placed {
+                Ok((_, v)) => {
+                    brought += 1;
+                    out.downloaded.push(v.title);
+                }
+                Err(e) => {
+                    // put back what was moved, so nothing is lost
+                    if !copy {
+                        for name in &moved {
+                            let _ = crate::import::bring(&dir.join(name), &f.dir.join(name), false);
+                        }
+                    }
+                    let _ = std::fs::remove_dir_all(&dir);
+                    out.failed.push(format!("{}: {e:#}", f.title));
+                }
+            }
+        }
+        run.progress.done.store(n as u64, Ordering::Relaxed);
+        *run.item.lock().unwrap() = (String::new(), String::new());
+        let failed = out.failed.len();
+        out.note = Some(format!(
+            "{} {} from {path}{}",
+            if copy { "Copied" } else { "Moved" },
+            plural(brought, "video"),
+            if failed > 0 { format!("; {} couldn't be brought in", plural(failed, "video")) } else { String::new() }
+        ));
+        Ok(out)
+    }
+
+    /// Download a kept video again in another quality. Its tags and what you've
+    /// watched carry over; the old copy is deleted only once the new one is in.
+    fn run_redownload(&self, key: &str, video: &str, quality: Quality, run: &Run) -> Result<Outcome> {
+        let y = self.ytdlp()?;
+        let (old, mut follow, partial) = self.with_lib(|l| {
+            let c = l.channels.get(key).context("That channel isn't in the library.")?;
+            let v = c.videos.iter().find(|v| v.id == video).cloned().context("That video isn't in the library any more.")?;
+            Ok((v, c.follow.clone(), l.partial_dir()))
+        })?;
+        follow.quality = quality;
+        *run.item.lock().unwrap() = (video.to_string(), String::new());
+        set_stage(run.stage, format!("Downloading {} again", old.title));
+        let d = capture::download(&y, &partial, video, &follow, run.progress, run.stage)?;
+        let (_, v) = self.with_lib(|l| {
+            let (k, mut v) = capture::place(l, d, video, quality, None)?;
+            v.tags = old.tags.clone();
+            v.watched = old.watched;
+            v.watched_at = old.watched_at.clone();
+            v.position = old.position;
+            v.played = old.played.clone();
+            v.extra = old.extra.clone();
+            l.put_video(&k, v.clone())?;
+            // the old copy, now that the new one is in
+            let dir = l.channel_folder(key).join(VIDEOS_DIR).join(crate::util::safe_rel(Path::new(&old.folder)).context("not a video's folder")?);
+            if old.folder != v.folder && dir.is_dir() {
+                std::fs::remove_dir_all(&dir).with_context(|| format!("couldn't remove the old copy in {}", dir.display()))?;
+            }
+            // the new copy takes the old folder's name ("… [id]_" while both were there)
+            let mut v = v;
+            let videos_dir = l.channel_folder(key).join(VIDEOS_DIR);
+            if k == key && old.folder != v.folder && !videos_dir.join(&old.folder).exists() && std::fs::rename(videos_dir.join(&v.folder), videos_dir.join(&old.folder)).is_ok() {
+                v.folder = old.folder.clone();
+            }
+            if let Some(mut c) = l.channels.get(&k).cloned() {
+                c.videos.retain(|x| x.id != video);
+                c.videos.push(v.clone());
+                l.put_channel(c)?;
+            }
+            if k != key {
+                if let Some(mut c) = l.channels.get(key).cloned() {
+                    c.videos.retain(|x| x.id != video);
+                    l.put_channel(c)?;
+                }
+            }
+            Ok((k, v))
+        })?;
+        Ok(Outcome { note: Some(format!("Downloaded {} again ({}, {})", v.title, quality.label().to_lowercase(), crate::util::human_bytes(v.bytes))), ..Default::default() })
     }
 
     fn run_video(&self, id: &str, video: &str, run: &Run) -> Result<Outcome> {
@@ -1489,6 +1857,7 @@ struct Run<'a> {
     progress: &'a Progress,
     stage: &'a Stage,
     item: &'a Mutex<(String, String)>,
+    slots: &'a Mutex<Vec<Slot>>,
 }
 
 fn upstream_of<'a>(l: &'a Library, id: &str) -> Result<&'a Vec<Listed>> {

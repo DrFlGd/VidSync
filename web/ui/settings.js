@@ -6,7 +6,7 @@ import { useStore } from "../lib/store.js";
 import { ui, api, ctx, toast, errText, setPref, reloadAll, poke, EVERY, DEFAULT_FOLLOW } from "./state.js";
 import { Icon } from "./icons.js";
 import { FollowFields } from "./follow.js";
-import { ago, when, plural } from "../lib/format.js";
+import { ago, when, plural, bytes } from "../lib/format.js";
 import { chooseDialog } from "./dialogs.js";
 
 // the browsers yt-dlp reads cookies from (--cookies-from-browser), Firefox first: on
@@ -123,6 +123,28 @@ export function SettingsPage() {
       toast(`Library: ${p}`);
     } catch (e) { toast(errText(e), 6000); }
   };
+  const importFolder = async () => {
+    const p = await ctx().pickFolder("Choose the folder with videos yt-dlp downloaded");
+    if (!p) return;
+    try {
+      const at = await api("import_scan", { path: p });
+      if (!at.new) {
+        toast(at.count ? `All ${plural(at.count, "video")} there are in the library already` : "No videos with a YouTube id in their names were found there", 6000);
+        return;
+      }
+      const names = at.videos.filter((v) => !v.in_library).slice(0, 4).map((v) => `“${v.title}”`).join(", ");
+      const how = await chooseDialog({
+        title: `Bring in ${plural(at.new, "video")}?`,
+        body: `${p} holds ${plural(at.new, "video")} (${bytes(at.new_bytes)}) the library hasn't got, such as ${names}${at.already ? `, and ${plural(at.already, "video")} it has already (left alone)` : ""}. Each goes into its channel's folder with its picture, subtitles and details.${at.without_info ? ` ${plural(at.without_info, "video")} came without its .info.json, so YouTube is asked which channel it's from.` : ""}`,
+        choices: [{ value: "copy", label: "Copy them in" }, { value: "move", label: "Move them in", cls: "primary" }],
+      });
+      if (!how) return;
+      await api("import_run", { path: p, mode: how });
+      toast(`${how === "copy" ? "Copying" : "Moving"} ${plural(at.new, "video")} into the library…`);
+      poke();
+      location.hash = "#/activity";
+    } catch (e) { toast(errText(e), 6000); }
+  };
   const fetchTool = async (name) => {
     try { await api("tool_update", { name }); toast(`Downloading ${name}…`); poke(); } catch (e) { toast(errText(e), 6000); }
   };
@@ -136,6 +158,8 @@ export function SettingsPage() {
         <div class="row"><span class="path" id="library-path">${info.library?.path || "No library open"}</span>
           <button type="button" id="change-library" onClick=${change}>Change…</button>
           ${info.library && html`<button type="button" onClick=${() => ctx().openPath(info.library.path)}>${Icon.folder(15)} Open</button>`}</div>
+        ${info.library && html`<div class="row"><button type="button" id="import" onClick=${importFolder}>${Icon.download(15)} Bring in videos already downloaded…</button>
+          <span class="hint" style="margin:0">From a folder yt-dlp downloaded into before: they count as kept and aren't downloaded again.</span></div>`}
         <p class="hint">Each channel gets a folder in it (<span class="mono">youtube.com/channels/@handle</span>) holding <span class="mono">channel.json</span> and one folder per video under <span class="mono">videos/</span>: the video, its picture, its metadata and subtitles, and its own <span class="mono">video.json</span>. Playlists are lists in <span class="mono">youtube.com/playlists/</span>. The folder works without the app and can be moved, synced or opened on another computer.</p>
       </div></section>
       ${lib && html`<section><h2 class="section-head">Checks</h2><div class="panel">
@@ -171,9 +195,12 @@ export function SettingsPage() {
         <div class="row" style="gap:18px;flex-wrap:wrap;align-items:flex-end">
           <${NumberField} id="sleep-downloads" label="Pause before each download" value=${s.polite.sleep_downloads} step="1" max=${3600} unit="seconds" set=${(n) => save({ polite: { ...s.polite, sleep_downloads: n } })} />
           <${NumberField} id="sleep-requests" label="Pause between page requests" value=${s.polite.sleep_requests} step="0.25" max=${600} unit="seconds" set=${(n) => save({ polite: { ...s.polite, sleep_requests: n } })} />
+          <label class="field"><span>Downloads at once</span>
+            <select id="parallel" value=${String(s.parallel || 1)} onChange=${(e) => save({ parallel: Number(e.target.value) })}>
+              <option value="1">One at a time</option><option value="2">Two</option><option value="3">Three</option></select></label>
           <${NumberField} id="limit-rate" label="Download speed limit" value=${Math.round((s.polite.limit_rate / 1048576) * 10) / 10} step="0.5" max=${10000} unit="MB/s (0: no limit)" set=${(n) => save({ polite: { ...s.polite, limit_rate: Math.round(n * 1048576) } })} />
         </div>
-        <p class="hint">Long runs (“Every video” on a big channel) can make YouTube ask to “confirm you're not a bot”. Short pauses make that rarer. When it happens anyway, scheduled checks wait an hour before asking again, and Activity says so.</p>
+        <p class="hint">Two or three downloads at once get through a big backlog sooner; listing a channel still goes one at a time. Long runs (“Every video” on a big channel) can make YouTube ask to “confirm you're not a bot”. Short pauses make that rarer. When it happens anyway, scheduled checks wait an hour before asking again, and Activity says so.</p>
       </div></section>
       <section><h2 class="section-head">Cookies</h2><div class="panel">
         <p class="hint">Members-only, age-restricted and private videos need your YouTube sign-in. yt-dlp can read it from a browser you're signed in to, or from a cookies file exported by a browser extension. Cookies stay on this computer, never in the library.</p>

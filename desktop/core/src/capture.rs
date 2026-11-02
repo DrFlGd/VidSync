@@ -291,15 +291,15 @@ pub fn clean_partial(partial: &Path) {
 /// Stop) is carried on from, when that try asked for the same quality.
 pub fn download(y: &YtDlp, partial: &Path, video_id: &str, follow: &Follow, progress: &Progress, stage: &Stage) -> Result<Downloaded> {
     let dir = partial.join(video_id);
-    let asked = json!({ "quality": follow.quality.key(), "subtitles": follow.subtitles.trim(), "ffmpeg": y.ffmpeg.is_some() });
+    let asked = json!({ "quality": follow.quality.key(), "subtitles": follow.subtitles.trim(), "ffmpeg": y.ffmpeg.is_some(), "comments": follow.comments });
     let before: Value = std::fs::read(dir.join(TRY_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-    if before.get("quality") != asked.get("quality") || before.get("subtitles") != asked.get("subtitles") || before.get("ffmpeg") != asked.get("ffmpeg") {
+    if before != asked {
         let _ = std::fs::remove_dir_all(&dir);
     }
     std::fs::create_dir_all(&dir).with_context(|| format!("couldn't make {}", dir.display()))?;
     std::fs::write(dir.join(TRY_FILE), serde_json::to_vec(&asked)?)?;
     set_stage(stage, "Downloading");
-    let res = y.download(&sources::video_url(video_id), &dir, follow.quality, &follow.subtitles, progress, stage);
+    let res = y.download(&sources::video_url(video_id), &dir, follow.quality, &follow.subtitles, follow.comments, progress, stage);
     if let Err(e) = res {
         // a half-written file is kept for the next try; otherwise nothing is worth keeping
         let resumable = std::fs::read_dir(&dir).into_iter().flatten().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".part"));

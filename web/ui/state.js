@@ -17,6 +17,7 @@ export const ui = createStore({
   selected: [],        // videos chosen with Ctrl/Shift or their tick box: "channel/id" keys
   jobs: { current: null, queued: [], recent: [] },
   dialog: null,        // { type: "add", text } | { type: "confirm", ... }
+  views: [],           // saved views: { name, filter, query, sort } (prefs)
   view: "cards",
   sort: "published",
   theme: "system",
@@ -29,7 +30,7 @@ export const api = (cmd, args = {}) => platform.api(cmd, args);
 export function initState(p) {
   platform = p;
   const prefs = p.store.prefs;
-  ui.set({ info: p.info || {}, view: prefs.get("view", "cards"), sort: prefs.get("sort", "published"), theme: prefs.get("theme", "system") });
+  ui.set({ info: p.info || {}, view: prefs.get("view", "cards"), views: prefs.get("views", []), sort: prefs.get("sort", "published"), theme: prefs.get("theme", "system") });
   applyTheme();
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
 }
@@ -135,4 +136,4 @@ export const QUALITIES = [["best", "Best available"], ["1080p", "Up to 1080p"], 
 export const qualityLabel = (q) => (QUALITIES.find(([k]) => k === q) || [q, q])[1];
 export const SUBS = [["", "None"], ["en.*,en", "English"], ["all", "Every language"]];
 export const EVERY = [[0, "Only by hand"], [1, "Every hour"], [3, "Every 3 hours"], [6, "Every 6 hours"], [12, "Every 12 hours"], [24, "Every day"], [168, "Every week"]];
-export const DEFAULT_FOLLOW = { mode: "new", tabs: { videos: true, shorts: false, streams: false }, quality: "best", subtitles: "", every_hours: null, keep_newest: 0, drop_watched_days: 0 };
+export const DEFAULT_FOLLOW = { mode: "new", tabs: { videos: true, shorts: false, streams: false }, quality: "best", subtitles: "", every_hours: null, keep_newest: 0, drop_watched_days: 0, comments: false };
