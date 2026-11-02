@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="72" fill="#1c5aa6"/>
+  <rect x="44" y="44" width="424" height="424" rx="52" fill="none" stroke="#fbfcfb" stroke-opacity=".35" stroke-width="6"/>
+  <!-- a strip of film: the kept videos -->
+  <g fill="none" stroke="#fbfcfb" stroke-width="22" stroke-linejoin="miter">
+    <rect x="96" y="136" width="320" height="240"/>
+  </g>
+  <g fill="#fbfcfb"><rect x="130" y="112" width="40" height="22"/><rect x="236" y="112" width="40" height="22"/><rect x="342" y="112" width="40" height="22"/><rect x="130" y="378" width="40" height="22"/><rect x="236" y="378" width="40" height="22"/><rect x="342" y="378" width="40" height="22"/></g>
+  <!-- play -->
+  <path d="M212 196v120l104-60z" fill="#f2b705"/>
+</svg>

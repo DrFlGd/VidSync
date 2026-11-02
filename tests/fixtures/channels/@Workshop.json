@@ -1,0 +1,16 @@
+{
+ "channel_id": "UC_work_0000000000000000",
+ "name": "Workshop Talks",
+ "description": "Talks from the workshop",
+ "subscribers": 340,
+ "avatar": "avatar.png",
+ "tabs": {
+  "videos": [
+   "wrk00000002",
+   "wrk00000001"
+  ],
+  "streams": [
+   "liv00000001"
+  ]
+ }
+}

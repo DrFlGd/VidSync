@@ -1,0 +1,70 @@
+# Changelog
+
+What was built, when and why. It's written for whoever picks the work up next, people or agents: start with **For agents** below, then read the newest release. Newest first.
+
+**Keeping it up to date:** add a line under **Unreleased** with each change you push (what changed for the user, and anything the next person needs to know). When CI publishes a release, move those lines under a heading for that version. The release notes are the **Unreleased** section, so write it for the user.
+
+---
+
+## For agents
+
+### What this is
+
+A desktop app (Windows first, Linux kept portable; Tauri 2) that keeps a library of YouTube videos downloaded with yt-dlp: add a channel, playlist or video by its link, its videos are organised by channel, playlist and creator (the user's own grouping of channels), followed sources are checked for new videos on a schedule, and an audit shows what each source lists upstream against what the library keeps. The owner ("DrFlGd", Jerred) asked for it on 2026-11-02 with Repo Sync's look and stack as the cue; the plan and the decisions are in `docs/PLAN.md`.
+
+### Where things are
+
+| Path | What |
+| --- | --- |
+| `web/` | The front end (no build step). `app.js`: start-up and routing (`#/` with `?creator=`/`?channel=`/`?playlist=`/`?tag=` filters, `#/sources`, `#/source/<id>?tab=videos|audit|playlists`, `#/video/<channel key>/<video id>`, `#/audit`, `#/activity`, `#/settings`, `#/about`). `web/ui/`: `shell.js` (the menu with its creator, channel, playlist and tag filters, the status bar with the download in hand, keys, pasting a link anywhere opens Add), `state.js` (shared state, prefs, theme, polling the jobs: every second while there's work, every 15 s otherwise; `DEFAULT_FOLLOW`, the option lists), `videos.js` (cards and list, search, sort, the pending card), `sources.js` (channels grouped by creator, playlists, channels only holding videos), `source.js` (a source's page: videos, the Audit tab with Download and Skip per video, playlists; the inspector with details, Follow, Creator, Your tags, Notes), `video.js` (the player, description with timestamps, chapters, details, tags), `audit.js`, `activity.js`, `settings.js` (library, schedule, defaults for new sources, Tools: yt-dlp and ffmpeg found/fetched/updated, cookies), `dialogs.js` (Add with link checks and follow options, confirm), `follow.js` (the follow fields shared by Add and the inspector), `actions.js`, `about.js`, `icons.js`. `lib/format.js`: sizes, dates, durations. `platform.js` / `platform-desktop.js`: the seam between the page and the backend. |
+| `desktop/core/` | Rust, no GUI. `api.rs` (the command table `App::call`, the job queue and its worker thread, the schedule thread, the JSON the page gets), `library.rs` (the library folder, `channel.json`/`playlist.json` shapes, `Follow`, `Listed` upstream entries and their `State`, `audit()`, scanning), `sources.rs` (reading YouTube links: channel handles/ids/paths, playlists, videos; their URLs), `ytdlp.rs` (running yt-dlp: listing with `-J --flat-playlist`, a video's info, downloads with a progress template and Stop, `explain()` turning its errors into short reasons, sorting the files it wrote), `capture.rs` (listing a channel through its tabs or a playlist, `merge()` of the fresh list into upstream by follow mode, `wanted()`, downloading into `_library/.partial/<id>` and `place()` into the channel's dated folder, avatars, deleting), `tools.rs` (finding yt-dlp and ffmpeg: Settings path, `VIDSYNC_YTDLP`/`VIDSYNC_FFMPEG`, `<config>/tools/`, the app's folder, PATH; fetching or updating them from GitHub), `http.rs` (ureq: JSON, downloads with progress, `file://` for tests), `config.rs` (this computer: the open library, tool paths, cookies, prefs), `util.rs`. `src/bin/vidsync-cli.rs`: `list`, `audit`, `add`, `check-all`, `serve` (the backend over HTTP for the tests, with `/library/<path>` serving byte ranges). |
+| `desktop/src-tauri/` | The Tauri app: a thin layer over `api.rs`, plus the folder and file dialogs, the file manager, web links in the browser and the `library://` protocol (media with Range requests, thumbnails, avatars). Version in `tauri.conf.json`. `bundle.resources` copies `build/tools/` (yt-dlp from `tools/fetch_tools.py`) beside the app. Icons from `icons/icon.svg` (`npx @tauri-apps/cli@2 icon icons/icon.svg -o icons`, then delete the mobile and Square ones). |
+| `tools/` | `build_desktop.py` (web/ to `build/desktop/ui`, fonts with `--fetch-fonts`, `THIRD_PARTY.md` and `build-info.json` for About), `fetch_tools.py` (yt-dlp, and ffmpeg with `--ffmpeg`, into `build/tools`), `set_version.py`, `vendor_preact.py`. |
+| `tests/` | `desktop_page.py` (acceptance test: the page + `vidsync-cli serve` + `ytdlp_mock.py`, in Chromium; about 115 checks), `ytdlp_mock.py` (a stand-in for yt-dlp answering `--version`, flat listings of channel tabs and playlists, a video's JSON and downloads with progress lines, from JSON fixtures), `fixtures/` (two channels, a playlist, videos; one is members-only so a download fails), `tauri_shim.js`. |
+| `.github/workflows/desktop.yml` | Windows app, tests and release; Linux only from Run workflow. |
+
+### Conventions
+
+- **Releases.** The repository keeps `0.<phase>.0` in `desktop/src-tauri/tauri.conf.json` and `desktop/Cargo.toml`. CI picks the next free `0.<phase>.<n>` from the release tags and publishes `v<version>` from `main` only when the Rust tests, the acceptance test and the Windows build pass.
+- **Windows first**, as in the owner's other apps; keep the code portable.
+- **Plan first** for a big feature: the design goes into `docs/PLAN.md` before the code.
+- **Text:** plain words in the interface, no jargon; British spellings (licence, colour), as in the other apps.
+- **The library folder is the source of truth** and must make sense without the app. No database in it; unknown keys in the JSON are kept (`#[serde(flatten)] extra`); JSON is written with sorted keys (`util::write_json`). Nothing downloaded is deleted except by the user (Delete the video, Remove the channel).
+- **yt-dlp is a program, never linked.** Everything it's asked goes through `ytdlp.rs`; anything new asked of it needs the stand-in (`tests/ytdlp_mock.py`) to answer it too.
+- **Videos live in their channel's folder**, whatever brought them in (a playlist, a pasted link). A channel created that way has `followed: false` until the user follows it. Playlists are ordered lists of ids.
+- **Tests grow with each feature:** add checks to `tests/desktop_page.py` for everything the user can see.
+
+### Working in a cloud session
+
+- crates.io, PyPI and npm were reachable on 2026-11-02 (`cargo test -p vidsync-core` works; `apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev` let `cargo check -p vid-sync` build the Tauri app too). youtube.com and api.github.com were refused by the session's proxy, so the real yt-dlp can't be exercised there: use the stand-in.
+- **Acceptance test locally:** `python3 tools/build_desktop.py --out build/desktop`, then `python3 tests/desktop_page.py --cli desktop/target/debug/vidsync-cli --ui build/desktop/ui --home /tmp/vs-home --out /tmp/vs-shots --chromium /opt/pw-browsers/chromium` (`pip install playwright`; the pre-installed Chromium works; ffmpeg makes the player checks real).
+- **By hand:** `VIDSYNC_YTDLP=tests/ytdlp_mock.py VIDSYNC_MOCK_FIXTURES=tests/fixtures vidsync-cli serve --ui build/desktop/ui --home /tmp/vs-home --library /tmp/vs-lib --tick 1`, then open the page in a browser with `tests/tauri_shim.js` injected (the test does this). `VIDSYNC_CONFIG` gives `vidsync-cli` another config folder; `VIDSYNC_MOCK_DELAY` and `VIDSYNC_MOCK_LOG` slow and log the stand-in.
+
+### Known limitations now
+
+- Checks run while the app is open (or from `vidsync-cli check-all`); there's no tray icon or service yet.
+- One download at a time, and a stopped or broken download is started again whole at the next check (yt-dlp's own `.part` resume isn't used, since each download gets a fresh partial folder).
+- Cookies are a path to a file or a browser's name typed in Settings; the app doesn't sign in to YouTube itself. Age-restricted and members-only videos need them.
+- A channel's listing is one flat `-J` per tab, so very large channels take a while on the first check; there's no "stop listing after the newest N" yet.
+- The player uses the system WebView's codecs: an AV1 or VP9 file that WebView2 can't play falls back to "Open in player".
+- Deleted or private videos upstream are marked gone but the kept file stays; nothing is re-fetched automatically when YouTube changes a title.
+- Installers aren't code-signed, and the app doesn't update itself.
+
+### Next (ideas, not yet chosen by the owner)
+
+See `docs/FUTURE.md` (written 2026-11-02, sized and ordered): a tray icon so checks run with the window closed; SponsorBlock and chapter-based trimming; watching progress and a "watched" mark; a queue with more than one download; notifications; importing an existing yt-dlp folder; per-creator pages; and an export of the audit.
+
+---
+
+## Unreleased
+
+First version of Vid Sync:
+
+- **Add channels, playlists and videos by their links**, one or many at once (paste a link anywhere in the window, or press N). Each link is read as you type, and anything already in the library is pointed out. A video link can also add the playlist it came from.
+- **Downloads with yt-dlp** (found on the computer, bundled with the installer, or fetched and updated from Settings → Tools), and ffmpeg beside it when wanted. Quality (best, up to 1080p, up to 720p, audio only), subtitles and the tabs to follow (videos, shorts, live streams) per source, with defaults for new channels and playlists.
+- **Followed on a schedule**: every day by default (hourly to weekly, or by hand; per source too). "New videos from now on", "Every video" or "Only list them" per channel; playlists take every video and keep their order. Activity shows the download in hand with its progress and Stop, what's waiting, and what each check found.
+- **The audit**: for each source, what YouTube lists against what's kept (kept, missing, failed with yt-dlp's reason, not wanted, skipped, gone), with Download and Skip per video, and an Audit page totalling every source.
+- **Organised by channel, playlist, creator and tag**, searched by title, channel and tags; cards or a list; a page for each video (played in the app with seeking, description with clickable timestamps, chapters, details, tags) and for each channel or playlist (videos, audit, follow settings, creator, tags, notes).
+- **A library folder that makes sense without the app**: `youtube.com/channels/<@handle>/videos/<date> <title> [<id>]/` with the media, info JSON, thumbnail and subtitles; `channel.json` and `playlist.json` beside them.
+
+For agents: the code map above is this version. The command table is in `api.rs` (`App::call`); the jobs are `add`, `check`, `missing`, `video` and `tool`; `vidsync-cli serve` is the backend the acceptance test drives.

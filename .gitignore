@@ -10,3 +10,4 @@ desktop/src-tauri/gen/
 desktop/node_modules/
 # the test's copy of the fixtures gets a generated video
 tests/fixtures/sample.mp4
+tests/fixtures/sample.webm
