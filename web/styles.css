@@ -425,3 +425,5 @@ body:has(.selection-bar) .toast { bottom: 100px; }
 .view-link .nav-link { flex: 1; min-width: 0; }
 .view-link .forget { padding: 0 8px; border: 0; background: none; color: var(--graphite); opacity: 0; }
 .view-link:hover .forget, .view-link .forget:focus { opacity: 1; }
+.side-by-side { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 10px; }
+.side-by-side li { display: grid; gap: 4px; font-size: 14px; }

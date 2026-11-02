@@ -65,6 +65,8 @@ pub struct AppConfig {
     pub quit_on_close: bool,
     /// No system notices for new videos or for things that need the user.
     pub notices_off: bool,
+    /// Videos downloaded side by side in a check (1 to 3; 0 reads as 1).
+    pub parallel: u32,
 }
 
 impl AppConfig {

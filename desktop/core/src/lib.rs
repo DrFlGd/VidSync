@@ -7,6 +7,7 @@ pub mod api;
 pub mod capture;
 pub mod config;
 pub mod http;
+pub mod import;
 pub mod library;
 pub mod sources;
 pub mod textsearch;

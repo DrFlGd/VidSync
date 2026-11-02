@@ -11,6 +11,7 @@ A desktop app (Windows first, Linux kept portable) that keeps a library of YouTu
 - **Organised in several ways.** Videos by channel, by playlist (in the playlist's order), by creator (your own grouping of channels, such as a person with several of them), by tag and by search; cards or a list, sorted by published, downloaded, title, channel, length or size.
 - **Watching.** The player carries on where you stopped; videos are marked watched, with a Continue watching row and a Not watched yet filter. Ctrl or Shift and click chooses several videos to mark, tag or delete together. A channel can keep only its newest videos, or let watched ones go after a while.
 - **Find things.** Search looks inside subtitles and descriptions too, and jumps the player to the second something is said; any filter and search can be saved to the menu; a source can keep the top comments with each video.
+- **More at once.** Two or three downloads side by side, a folder of videos downloaded with yt-dlp before brought into the library (copied or moved, each into its channel), and any video downloaded again in another quality, keeping your tags and where you'd got to.
 - **A page for each video**: played in the app (seeking works), description with clickable timestamps, chapters, views, length, resolution, file details and your tags; and a page for each channel or playlist with its videos, audit, follow settings, creator, tags and notes.
 
 The design and the plan are in [docs/PLAN.md](docs/PLAN.md). The stack and look follow [Repo Sync](https://github.com/DrFlGd/Repo-Sync), [Model Library](https://github.com/DrFlGd/Model-Library) and [SCAD Workshop](https://github.com/DrFlGd/SCAD-Workshop): a Rust core, a Tauri 2 window, a Preact page with no build step, the Drafting Sheet skin.
@@ -34,7 +35,7 @@ Everything the app shows comes from these files, so the folder can be moved, syn
 
 ## Status
 
-Version 0.4. Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
+Version 0.5. Installers are on the [releases page](https://github.com/DrFlGd/VidSync/releases) once CI publishes one (Windows: the `-setup.exe`, unsigned, so SmartScreen asks once; yt-dlp is included).
 
 Checks run while the app runs: closing the window leaves it in the tray, and Settings can start it at sign-in. Without the app, `vidsync-cli check-all` can be scheduled instead (Windows Task Scheduler, cron); it uses the same library.
 
