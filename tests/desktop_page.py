@@ -337,7 +337,13 @@ try:
 
         # ---- the video's page and the player ---------------------------------------------
         page.goto(BASE + f"/#/video/@Workshop/wrk00000001")
-        page.wait_for_selector("#player video")
+        page.wait_for_selector("#player")
+        if REAL_VIDEO:
+            wait_for(lambda: page.locator("#player video").count() == 1, "the video's page has a player",
+                     detail=lambda: f"player: {page.inner_text('#player')[:200]!r}; page errors: {page.evaluate('window.__errors')}")
+        else:
+            # without ffmpeg the stand-in writes a stub that no player can decode: the page must say so, not break
+            wait_for(lambda: "can't be played here" in page.inner_text("#player"), "a file the player can't decode is explained, with Open in the system's player (no ffmpeg here, so the sample is a stub)")
         check("Opening talk" in page.inner_text("h1"), "the video's page shows its title")
         check(page.locator(".chapters li").count() == 2, "chapters are listed")
         check("Workshop Talks" in page.inner_text(".crumbs"), "the crumbs lead back to the channel")
@@ -345,14 +351,15 @@ try:
         for label in ("Channel", "Creator", "Published", "Downloaded", "On disk"):
             check(label in props, f"the video's details show {label}")
         check("Demo Studio" in props, "with the creator")
-        src = page.get_attribute("#player video", "src") or ""
-        check(urllib.parse.unquote(src).startswith("/library/youtube.com/channels/@Workshop/videos/"), f"the player plays the file from the library folder {src}")
         if REAL_VIDEO:
+            src = page.get_attribute("#player video", "src") or ""
+            check(urllib.parse.unquote(src).startswith("/library/youtube.com/channels/@Workshop/videos/"), f"the player plays the file from the library folder {src}")
             wait_for(lambda: page.evaluate("document.querySelector('#player video').readyState") >= 1 and page.evaluate("document.querySelector('#player video').duration") > 1.5, "the player reads the video's length")
             r = urllib.request.Request(BASE + src, headers={"Range": "bytes=100-199"})
             with urllib.request.urlopen(r) as resp:
                 check(resp.status == 206 and resp.headers["content-range"].startswith("bytes 100-199/") and len(resp.read()) == 100, "the library serves byte ranges, so the player can seek")
-        page.click(".chapters li >> nth=1 >> button")
+        if REAL_VIDEO:
+            page.click(".chapters li >> nth=1 >> button")
         page.screenshot(path=str(a.out / "11-video.png"))
         page.fill("#tag-input", "keeper")
         page.press("#tag-input", "Enter")

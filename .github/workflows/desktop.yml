@@ -77,6 +77,8 @@ jobs:
           cargo test --release -p vidsync-core 2>&1 | tee ../ci-out/core-test.log
       - name: Front end
         run: python tools/build_desktop.py --out build/desktop --fetch-fonts
+      - name: ffmpeg (the test makes a real sample video with it)
+        run: choco install ffmpeg -y --no-progress 2>&1 | tail -3
       - name: Acceptance test (the page and the app's backend)
         env:
           PYTHONUTF8: "1"
