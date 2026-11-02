@@ -19,6 +19,7 @@ export function routeFromHash(hash) {
     const i = rest.lastIndexOf("/");
     return { page: "video", channel: decodeURIComponent(rest.slice(0, i)), video: decodeURIComponent(rest.slice(i + 1)) };
   }
+  if (path.startsWith("creator/")) return { page: "creator", name: decodeURIComponent(path.slice(8)) };
   if (["sources", "audit", "activity", "settings", "about"].includes(path)) return { page: path };
   // "#/?creator=Name" (or channel=, playlist=, tag=) opens the videos filtered
   for (const by of ["creator", "channel", "playlist", "tag"]) {
@@ -29,7 +30,8 @@ export function routeFromHash(hash) {
 
 function route() {
   const r = routeFromHash(location.hash);
-  ui.set({ route: r, menu: null, ...(r.filter ? { filter: r.filter } : {}) });
+  const left = ui.get().route.page !== r.page;
+  ui.set({ route: r, menu: null, ...(r.filter ? { filter: r.filter } : {}), ...(left ? { selected: [] } : {}) });
   if (r.filter) history.replaceState(null, "", "#/");
   document.querySelector(".source-main, .page")?.scrollTo?.(0, 0);
 }

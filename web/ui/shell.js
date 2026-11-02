@@ -13,6 +13,7 @@ import { AuditPage } from "./audit.js";
 import { ActivityPage } from "./activity.js";
 import { SettingsPage } from "./settings.js";
 import { AboutPage } from "./about.js";
+import { CreatorPage } from "./creator.js";
 import { Dialogs, openAdd } from "./dialogs.js";
 import { bytes, ago, plural } from "../lib/format.js";
 
@@ -56,6 +57,7 @@ function Sidebar() {
     channels: channels.filter((c) => c.videos > 0).sort((a, b) => b.videos - a.videos || a.name.localeCompare(b.name)),
     playlists: playlists.filter((p) => p.videos > 0),
     tags: tally(videos, (v) => v.tags),
+    unwatched: videos.filter((v) => !v.watched).length,
   }, [videos, channels, playlists, query]);
   const nextTheme = { system: "light", light: "dark", dark: "system" }[theme] || "system";
   const themeIcon = theme === "system" ? Icon.auto(16) : theme === "light" ? Icon.sun(16) : Icon.moon(16);
@@ -63,13 +65,14 @@ function Sidebar() {
     <a class="brand" href="#/"><${Mark} /><span>Vid Sync</span></a>
     <ul class="nav">
       <${NavLink} href="#/" icon=${Icon.video(16)} label="Videos" count=${count || ""} active=${route.page === "videos" || route.page === "video"} />
-      <${NavLink} href="#/sources" icon=${Icon.sources(16)} label="Sources" count=${nsources || ""} active=${route.page === "sources" || route.page === "source"} />
+      <${NavLink} href="#/sources" icon=${Icon.sources(16)} label="Sources" count=${nsources || ""} active=${route.page === "sources" || route.page === "source" || route.page === "creator"} />
       <${NavLink} href="#/audit" icon=${Icon.audit(16)} label="Audit" count=${missing || ""} warn=${missing > 0} active=${route.page === "audit"} />
       <${NavLink} href="#/activity" icon=${Icon.activity(16)} label="Activity" count=${working || ""} active=${route.page === "activity"} />
       <${NavLink} href="#/settings" icon=${Icon.cog(16)} label="Settings" active=${route.page === "settings"} />
       <${NavLink} href="#/about" icon=${Icon.info(16)} label="About" active=${route.page === "about"} />
     </ul>
     ${groups && html`<div class="filters">
+      ${videos.length > 0 && html`<div class="nav-head">Watching</div><ul class="nav"><${FilterLink} by="unwatched" value="1" label="Not watched yet" count=${groups.unwatched} /></ul>`}
       ${groups.creators.length > 0 && html`<div class="nav-head">Creators</div><ul class="nav">${groups.creators.map(([v, n]) => html`<${FilterLink} key=${v} by="creator" value=${v} label=${v} count=${n} />`)}</ul>`}
       ${groups.channels.length > 0 && html`<div class="nav-head">Channels</div><ul class="nav">${groups.channels.slice(0, 14).map((c) => html`<${FilterLink} key=${c.key} by="channel" value=${c.key} label=${c.name} count=${c.videos} />`)}</ul>`}
       ${groups.playlists.length > 0 && html`<div class="nav-head">Playlists</div><ul class="nav">${groups.playlists.slice(0, 10).map((p) => html`<${FilterLink} key=${p.id} by="playlist" value=${p.id} label=${p.name} count=${p.videos} />`)}</ul>`}
@@ -95,6 +98,7 @@ function Main() {
   if (route.page === "source") return html`<${SourcePage} key=${route.id} id=${route.id} tab=${route.tab} />`;
   if (route.page === "video") return html`<${VideoPage} key=${route.channel + "/" + route.video} channel=${route.channel} video=${route.video} />`;
   if (route.page === "sources") return html`<${SourcesPage} />`;
+  if (route.page === "creator") return html`<${CreatorPage} key=${route.name} name=${route.name} />`;
   if (route.page === "audit") return html`<${AuditPage} />`;
   if (route.page === "activity") return html`<${ActivityPage} />`;
   if (route.page === "settings") return html`<${SettingsPage} />`;

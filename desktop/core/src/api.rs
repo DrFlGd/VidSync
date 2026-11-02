@@ -450,6 +450,52 @@ impl App {
                 })?;
                 self.video(&key, &video)
             }
+            "video_progress" => {
+                let key = a["channel"].as_str().context("no channel given")?.to_string();
+                let video = vid()?;
+                let pos = a["position"].as_f64().unwrap_or(0.0);
+                let ended = a["ended"].as_bool().unwrap_or(false);
+                self.with_lib(|l| {
+                    let mut v = l.channels.get(&key).and_then(|c| c.videos.iter().find(|v| v.id == video)).cloned().context("That video isn't in the library.")?;
+                    v.played_to(pos, ended);
+                    let out = json!({ "watched": v.watched, "position": v.position });
+                    l.put_video(&key, v)?;
+                    Ok(out)
+                })
+            }
+            "videos_watched" => {
+                let on = a["watched"].as_bool().unwrap_or(true);
+                self.each_video(&a["items"], |v| {
+                    v.set_watched(on);
+                    Ok(())
+                })
+            }
+            "videos_tag" => {
+                let add = tags_of(&a["add"]);
+                let remove = tags_of(&a["remove"]);
+                self.each_video(&a["items"], |v| {
+                    v.tags.retain(|t| !remove.contains(t));
+                    for t in &add {
+                        if !v.tags.contains(t) {
+                            v.tags.push(t.clone());
+                        }
+                    }
+                    Ok(())
+                })
+            }
+            "videos_delete" => {
+                let items = items_of(&a["items"])?;
+                let busy = self.jobs.lock().unwrap().current.as_ref().map(|c| c.item.lock().unwrap().0.clone()).unwrap_or_default();
+                let mut n = 0;
+                for (key, video) in items {
+                    if video == busy {
+                        continue;
+                    }
+                    self.with_lib(|l| capture::delete_video(l, &key, &video))?;
+                    n += 1;
+                }
+                Ok(json!({ "deleted": n }))
+            }
             "remove" => self.remove(&id()?),
             "video_delete" => {
                 let key = a["channel"].as_str().context("no channel given")?.to_string();
@@ -487,6 +533,21 @@ impl App {
             }
             other => bail!("unknown command {other}"),
         }
+    }
+
+    /// Change several kept videos the same way ([{channel, video}, …]), saving each video.json.
+    fn each_video(&self, items: &Value, mut f: impl FnMut(&mut Video) -> Result<()>) -> Result<Value> {
+        let items = items_of(items)?;
+        self.with_lib(|l| {
+            let mut n = 0;
+            for (key, video) in &items {
+                let mut v = l.channels.get(key).and_then(|c| c.videos.iter().find(|v| &v.id == video)).cloned().with_context(|| format!("{video} isn't in the library."))?;
+                f(&mut v)?;
+                l.put_video(key, v)?;
+                n += 1;
+            }
+            Ok(json!({ "changed": n }))
+        })
     }
 
     fn app_info(&self) -> Value {
@@ -626,6 +687,9 @@ impl App {
             "folder": v.folder,
             "quality": v.quality,
             "tags": v.tags,
+            "watched": v.watched,
+            "position": v.position,
+            "played": v.played,
             "view_count": v.view_count,
             "subtitles": v.subtitles,
             "playlists": l.playlists_of(&v.id).iter().map(|p| p.id()).collect::<Vec<_>>(),
@@ -1316,10 +1380,29 @@ impl App {
                     (p.upstream.clone(), p.follow.clone(), true)
                 }
             };
-            Ok((capture::wanted(&up, &|v| l.has_video(v), ordered, retry), follow, l.partial_dir()))
+            let mut list = capture::wanted(&up, &|v| l.has_video(v), ordered, retry);
+            // "keep only the newest N": what's older isn't downloaded only to be deleted
+            if kind == Kind::Channel {
+                if let Some(allowed) = capture::newest_allowed(&up, &|v| l.has_video(v), follow.keep_newest) {
+                    let older: Vec<String> = list.iter().filter(|x| !allowed.contains(&x.id)).map(|x| x.id.clone()).collect();
+                    if !older.is_empty() {
+                        let mut c = l.channels.get(key).cloned().context("gone")?;
+                        for x in c.upstream.iter_mut().filter(|x| older.contains(&x.id)) {
+                            x.state = State::NotWanted;
+                            x.error = format!("Older than the newest {} kept", follow.keep_newest);
+                        }
+                        l.put_channel(c)?;
+                        list.retain(|x| allowed.contains(&x.id));
+                    }
+                }
+            }
+            Ok((list, follow, l.partial_dir()))
         })?;
         let mut out = Outcome::default();
         if follow.mode == Mode::None && !retry {
+            if kind == Kind::Channel {
+                out.deleted = self.with_lib(|l| capture::prune(l, key))?;
+            }
             return Ok(out);
         }
         let n = list.len();
@@ -1358,6 +1441,9 @@ impl App {
             }
         }
         *run.item.lock().unwrap() = (String::new(), String::new());
+        if kind == Kind::Channel {
+            out.deleted = self.with_lib(|l| capture::prune(l, key))?;
+        }
         Ok(out)
     }
 
@@ -1423,6 +1509,15 @@ fn in_words(secs: i64) -> String {
         (h, 0) => format!("{h} h"),
         (h, m) => format!("{h} h {m} min"),
     }
+}
+
+/// [{channel, video}, …] from the page.
+fn items_of(v: &Value) -> Result<Vec<(String, String)>> {
+    let items: Vec<(String, String)> = v.as_array().map(|a| a.iter().filter_map(|x| Some((x["channel"].as_str()?.to_string(), x["video"].as_str()?.to_string()))).collect()).unwrap_or_default();
+    if items.is_empty() {
+        bail!("No videos were chosen.");
+    }
+    Ok(items)
 }
 
 fn tags_of(v: &Value) -> Vec<String> {

@@ -143,7 +143,7 @@ export function SettingsPage() {
           <select id="check-every" value=${String(lib.check_every_hours)} onChange=${(e) => saveLib({ check_every_hours: Number(e.target.value) })}>
             ${EVERY.map(([v, l]) => html`<option value=${String(v)}>${l}</option>`)}
             ${!EVERY.some(([v]) => v === lib.check_every_hours) && html`<option value=${String(lib.check_every_hours)}>Every ${lib.check_every_hours} hours</option>`}</select></label>
-        <p class="hint">Checks run while Vid Sync is running, in its window or in the tray (one download at a time); a source can have its own schedule on its page. A check lists the source on YouTube, then downloads what's new. Nothing is ever deleted by a check.
+        <p class="hint">Checks run while Vid Sync is running, in its window or in the tray (one download at a time); a source can have its own schedule on its page. A check lists the source on YouTube, then downloads what's new. A check deletes nothing, unless a channel is set to keep only its newest videos or to let watched ones go.
           ${s.next_check && html` Next check ${ago(s.next_check)} (${when(s.next_check)}).`}</p>
       </div></section>
       <section><h2 class="section-head">Running in the background</h2><div class="panel">

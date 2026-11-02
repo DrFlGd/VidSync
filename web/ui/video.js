@@ -1,8 +1,9 @@
-// A video's page: the app's own player, its details and description, where
+// A video's page: the app's own player (which carries on where you stopped and
+// marks the video watched near its end), its details and description, where
 // else it is, and what can be done with it.
 import { html, useEffect, useRef, useState } from "../lib/html.js";
 import { useStore } from "../lib/store.js";
-import { ui, api, toast, errText, reloadAll, qualityLabel } from "./state.js";
+import { ui, api, toast, errText, reloadAll, loadVideos, qualityLabel } from "./state.js";
 import { Icon } from "./icons.js";
 import { confirmDialog } from "./dialogs.js";
 import { openPath, openUrl } from "./actions.js";
@@ -39,9 +40,34 @@ export function VideoPage({ channel, video }) {
   const [v, setV] = useState(null);
   const [err, setErr] = useState("");
   const [playErr, setPlayErr] = useState("");
+  const [resumed, setResumed] = useState(0);
   const player = useRef(null);
+  const sent = useRef({ at: 0, pos: -1 });
   const reload = () => api("video", { channel, video }).then((r) => { setV(r); setErr(""); }).catch((e) => setErr(errText(e)));
   useEffect(() => { reload(); }, [channel, video]);
+  // how far it was played goes into the video's video.json: every 10 s while playing, on pause, at the end and on leaving
+  const report = (ended = false) => {
+    const p = player.current;
+    if (!p || !(p.currentTime > 0)) return;
+    const pos = p.currentTime;
+    if (!ended && Math.abs(pos - sent.current.pos) < 1) return;
+    sent.current = { at: Date.now(), pos };
+    return api("video_progress", { channel, video, position: pos, ended })
+      .then((r) => setV((x) => (x ? { ...x, watched: r.watched, position: r.position } : x))).catch(() => {});
+  };
+  useEffect(() => () => { Promise.resolve(report()).then(() => loadVideos()); }, [channel, video]);
+  const media = {
+    onLoadedMetadata: (e) => {
+      const el = e.currentTarget;
+      if (v && !v.watched && v.position > 5 && v.position < (el.duration || Infinity) - 5) { el.currentTime = v.position; setResumed(v.position); }
+    },
+    onTimeUpdate: () => { if (Date.now() - sent.current.at > 10000) report(); },
+    onPause: () => report(),
+    onEnded: () => report(true),
+  };
+  const setWatched = async (on) => {
+    try { await api("videos_watched", { items: [{ channel, video }], watched: on }); await reload(); loadVideos(); } catch (e) { toast(errText(e), 6000); }
+  };
   if (err && !v) return html`<div class="page"><p class="notice error">${err}</p><a class="button" href="#/">${Icon.back(14)} Back to the videos</a></div>`;
   if (!v) return html`<div class="page"><p class="muted">Reading…</p></div>`;
   const audio = v.quality === "audio" || v.vcodec === "none";
@@ -55,12 +81,13 @@ export function VideoPage({ channel, video }) {
       <nav class="crumbs" aria-label="Where"><a href="#/">Videos</a><span>/</span><a href=${`#/source/${encodeURIComponent(v.source)}`}>${v.channel_name}</a></nav>
       <div class="player" id="player">
         ${playErr ? html`<div class="player-none"><p>${playErr}</p><button type="button" onClick=${() => openPath(`${v.path}/${v.file}`)}>${Icon.play(14)} Open in the system's player</button></div>`
-          : audio ? html`<div class="player-audio">${v.thumbnail_url && html`<img src=${v.thumbnail_url} alt="" />`}<audio ref=${player} controls preload="metadata" src=${v.file_url}></audio></div>`
-          : html`<video ref=${player} controls preload="metadata" poster=${v.thumbnail_url || null} src=${v.file_url}
+          : audio ? html`<div class="player-audio">${v.thumbnail_url && html`<img src=${v.thumbnail_url} alt="" />`}<audio ref=${player} controls preload="metadata" src=${v.file_url} ...${media}></audio></div>`
+          : html`<video ref=${player} controls preload="metadata" poster=${v.thumbnail_url || null} src=${v.file_url} ...${media}
               onError=${() => setPlayErr("This file can't be played here (the codec isn't one the app's player knows).")}>
               ${v.subtitles.map((s) => html`<track key=${s} kind="subtitles" src=${v.file_url.replace(encodeURIComponent(v.file), encodeURIComponent(s))} srclang=${(s.match(/\.([a-z]{2,3})(-[A-Za-z]+)?\.(vtt|srt)$/) || [])[1] || "en"} label=${s.split(".").slice(-2, -1)[0]} />`)}
             </video>`}
       </div>
+      ${resumed > 0 && html`<p class="hint" id="resumed">Carrying on from ${duration(resumed)}, where you stopped. <button type="button" class="ghost small" onClick=${() => { if (player.current) player.current.currentTime = 0; setResumed(0); }}>Start over</button></p>`}
       <header class="repo-head">
         <div class="repo-title"><h1>${v.title}</h1></div>
         <div class="facts video-facts">
@@ -73,6 +100,7 @@ export function VideoPage({ channel, video }) {
         </div>
         <div class="repo-actions">
           <button type="button" class="primary" id="open-system" onClick=${() => openPath(`${v.path}/${v.file}`)} title="Open the file in the system's player">${Icon.play(15)} Open in player</button>
+          <button type="button" id="watched-toggle" aria-pressed=${v.watched ? "true" : "false"} onClick=${() => setWatched(!v.watched)} title=${v.watched ? "Watched: click to mark it not watched" : "Mark it watched"}>${v.watched ? html`${Icon.check(15)} Watched` : html`${Icon.eye(15)} Mark watched`}</button>
           <button type="button" onClick=${() => openPath(v.path)} title="Open the video's folder">${Icon.folder(15)} Folder</button>
           <button type="button" onClick=${() => openUrl(v.web_url)} title=${v.web_url}>${Icon.external(15)} YouTube</button>
           <${Menu} id="video-more" label=${Icon.dots(16)} title="More" align="left">
@@ -91,7 +119,7 @@ export function VideoPage({ channel, video }) {
       <section><h2>Details</h2>
         <dl class="props" id="props">
           <dt>Channel</dt><dd><a href=${`#/source/${encodeURIComponent(v.source)}`}>${v.channel_name}</a></dd>
-          ${v.creator && html`<dt>Creator</dt><dd>${v.creator}</dd>`}
+          ${v.creator && html`<dt>Creator</dt><dd><a href=${`#/creator/${encodeURIComponent(v.creator)}`}>${v.creator}</a></dd>`}
           <dt>Published</dt><dd>${day(v.upload_date) || "?"}</dd>
           <dt>Downloaded</dt><dd title=${when(v.downloaded)}>${ago(v.downloaded)}</dd>
           <dt>Asked for</dt><dd>${qualityLabel(v.quality)}</dd>

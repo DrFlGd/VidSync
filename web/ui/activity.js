@@ -52,7 +52,8 @@ export function ActivityPage() {
       ${jobs.recent?.length ? html`<ul class="log" id="finished">${jobs.recent.map((f) => html`<li key=${f.job.id}>
         <span class="t" title=${when(f.finished)}>${ago(f.finished)}<br />${what(f.job)}</span>
         <span>${target(f.job)}<br /><span class=${!f.ok ? "err" : f.outcome && (f.outcome.downloaded?.length || f.outcome.listed_new) ? "new" : "muted"}>${f.message}</span>
-          ${f.outcome?.failed?.length > 0 && html`<ul class="sublist">${f.outcome.failed.map((x) => html`<li class="err">${x}</li>`)}</ul>`}</span>
+          ${f.outcome?.failed?.length > 0 && html`<ul class="sublist">${f.outcome.failed.map((x) => html`<li class="err">${x}</li>`)}</ul>`}
+          ${f.outcome?.deleted?.length > 0 && html`<ul class="sublist deleted">${f.outcome.deleted.map((x) => html`<li class="muted">${Icon.trash(11)} ${x}</li>`)}</ul>`}</span>
       </li>`)}</ul>` : html`<p class="muted">Nothing has been checked since the app started.</p>`}
     </div>`;
 }

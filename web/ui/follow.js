@@ -3,6 +3,9 @@
 import { html } from "../lib/html.js";
 import { MODES, QUALITIES, SUBS, EVERY } from "./state.js";
 
+const KEEP = [[0, "Every video it downloads"], [5, "Only the newest 5"], [10, "Only the newest 10"], [25, "Only the newest 25"], [50, "Only the newest 50"], [100, "Only the newest 100"]];
+const DROP = [[0, "Never"], [1, "A day after watching"], [7, "A week after watching"], [30, "A month after watching"]];
+
 const CHECKS = [[null, "Library's schedule"], ...EVERY.filter(([v]) => v !== 0).map(([v, l]) => [v, l]), [0, "Only by hand"]];
 
 /**
@@ -31,6 +34,15 @@ export function FollowFields({ f, set, kind = "channel", schedule = true, ffmpeg
       <select id=${ids + "-subs"} value=${SUBS.some(([k]) => k === f.subtitles) ? f.subtitles : "custom"} onChange=${(e) => e.target.value !== "custom" && set({ subtitles: e.target.value })}>
         ${SUBS.map(([k, l]) => html`<option value=${k}>${l}</option>`)}
         ${!SUBS.some(([k]) => k === f.subtitles) && html`<option value="custom">${f.subtitles}</option>`}</select></label>
+    ${kind === "channel" && html`<label class="field"><span>Keep</span>
+      <select id=${ids + "-keep"} value=${String(f.keep_newest || 0)} onChange=${(e) => set({ keep_newest: Number(e.target.value) })}>
+        ${KEEP.map(([v, l]) => html`<option value=${String(v)}>${l}</option>`)}
+        ${!KEEP.some(([v]) => v === (f.keep_newest || 0)) && html`<option value=${String(f.keep_newest)}>Only the newest ${f.keep_newest}</option>`}</select></label>
+    <label class="field"><span>Delete watched videos</span>
+      <select id=${ids + "-drop"} value=${String(f.drop_watched_days || 0)} onChange=${(e) => set({ drop_watched_days: Number(e.target.value) })}>
+        ${DROP.map(([v, l]) => html`<option value=${String(v)}>${l}</option>`)}
+        ${!DROP.some(([v]) => v === (f.drop_watched_days || 0)) && html`<option value=${String(f.drop_watched_days)}>${f.drop_watched_days} days after watching</option>`}</select></label>
+    ${(f.keep_newest > 0 || f.drop_watched_days > 0) && html`<p class="hint">Older or watched videos are deleted after each check (Activity lists them); the audit still lists them, so they aren't downloaded again. A video you've tagged is always kept.</p>`}`}
     ${schedule && html`<label class="field"><span>Check</span>
       <select id=${ids + "-every"} value=${f.every_hours == null ? "" : String(f.every_hours)} onChange=${(e) => set({ every_hours: e.target.value === "" ? null : Number(e.target.value) })}>
         ${CHECKS.map(([v, l]) => html`<option value=${v == null ? "" : String(v)}>${l}${v == null && libraryEvery != null ? ` (${(EVERY.find(([x]) => x === libraryEvery) || [0, `every ${libraryEvery} hours`])[1].toLowerCase()})` : ""}</option>`)}</select></label>`}
