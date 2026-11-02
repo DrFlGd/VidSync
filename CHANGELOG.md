@@ -20,7 +20,7 @@ A desktop app (Windows first, Linux kept portable; Tauri 2) that keeps a library
 | `desktop/core/` | Rust, no GUI. `api.rs` (the command table `App::call`, the job queue and its worker thread, the schedule thread, the JSON the page gets), `library.rs` (the library folder, `channel.json`/`playlist.json` shapes, `Follow`, `Listed` upstream entries and their `State`, `audit()`, scanning), `sources.rs` (reading YouTube links: channel handles/ids/paths, playlists, videos; their URLs), `ytdlp.rs` (running yt-dlp: listing with `-J --flat-playlist`, a video's info, downloads with a progress template and Stop, `explain()` turning its errors into short reasons, sorting the files it wrote), `capture.rs` (listing a channel through its tabs or a playlist, `merge()` of the fresh list into upstream by follow mode, `wanted()`, downloading into `_library/.partial/<id>` and `place()` into the channel's dated folder, avatars, deleting), `tools.rs` (finding yt-dlp and ffmpeg: Settings path, `VIDSYNC_YTDLP`/`VIDSYNC_FFMPEG`, `<config>/tools/`, the app's folder, PATH; fetching or updating them from GitHub), `http.rs` (ureq: JSON, downloads with progress, `file://` for tests), `config.rs` (this computer: the open library, tool paths, cookies, politeness, downloads at once, prefs), `textsearch.rs` (searching subtitles and descriptions), `import.rs` (bringing in a folder yt-dlp filled elsewhere), `util.rs`. `src/bin/vidsync-cli.rs`: `list`, `audit`, `add`, `check-all`, `serve` (the backend over HTTP for the tests, with `/library/<path>` serving byte ranges). |
 | `desktop/src-tauri/` | The Tauri app: a thin layer over `api.rs`, plus the tray, start at sign-in, notices, one copy at a time, the folder and file dialogs, the file manager, web links in the browser and the `library://` protocol (media with Range requests, thumbnails, avatars). Version in `tauri.conf.json`. `bundle.resources` copies `build/tools/` (yt-dlp from `tools/fetch_tools.py`) beside the app. Icons from `icons/icon.svg` (`npx @tauri-apps/cli@2 icon icons/icon.svg -o icons`, then delete the mobile and Square ones). |
 | `tools/` | `build_desktop.py` (web/ to `build/desktop/ui`, fonts with `--fetch-fonts`, `THIRD_PARTY.md` and `build-info.json` for About), `fetch_tools.py` (yt-dlp, and ffmpeg with `--ffmpeg`, into `build/tools`), `set_version.py`, `vendor_preact.py`. |
-| `tests/` | `desktop_page.py` (acceptance test: the page + `vidsync-cli serve` + `ytdlp_mock.py`, in Chromium; about 215 checks), `ytdlp_mock.py` (a stand-in for yt-dlp answering `--version`, flat listings of channel tabs and playlists, a video's JSON and downloads with progress lines, from JSON fixtures), `fixtures/` (two channels, a playlist, videos; one is members-only so a download fails), `tauri_shim.js`. |
+| `tests/` | `desktop_page.py` (acceptance test: the page + `vidsync-cli serve` + `ytdlp_mock.py`, in Chromium; about 220 checks), `ytdlp_mock.py` (a stand-in for yt-dlp answering `--version`, flat listings of channel tabs and playlists, a video's JSON and downloads with progress lines, from JSON fixtures), `fixtures/` (two channels, a playlist, videos; one is members-only so a download fails), `tauri_shim.js`. |
 | `.github/workflows/desktop.yml` | Windows app, tests and release; Linux only from Run workflow. |
 
 ### Conventions
@@ -57,6 +57,10 @@ See `docs/FUTURE.md` (written 2026-11-02, sized and ordered): a tray icon so che
 ---
 
 ## Unreleased
+
+- **Search a source's audit.** A channel's or playlist's Audit tab has a search box: it narrows the list to the videos whose title, id, tab or error has every word you type, in any order and any case, within whichever part of the list is showing (Listed, Missing, Not wanted, Kept, Gone). With Not wanted showing, "Download these" fetches just the ones found. Esc clears it.
+
+## 0.5.0 (2026-11-02)
 
 After trying 0.1.0, Jerred asked for these:
 

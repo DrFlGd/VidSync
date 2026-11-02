@@ -47,12 +47,24 @@ function stateOf(x) {
 }
 
 // Everything the source lists upstream, with what the library has of each.
+// Lower case, without accents, so "cafe" finds "Café".
+const fold = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/** Whether every word of the search is in the video's title, id, date, tab, channel or error. */
+function matches(x, words) {
+  if (!words.length) return true;
+  const hay = fold([x.title, x.id, x.upload_date, x.upload_date && day(x.upload_date), x.tab, x.channel, x.error].join(" "));
+  return words.every((w) => hay.includes(w));
+}
+
 function Audit({ source, reload }) {
   const id = source.id;
   const [show, setShow] = useState("all");
+  const [query, setQuery] = useState("");
+  const words = fold(query).split(/\s+/).filter(Boolean);
   const list = source.upstream;
   const a = source.audit;
-  const shown = list.filter((x) => {
+  const shown = list.filter((x) => matches(x, words)).filter((x) => {
     if (show === "all") return !x.gone;
     if (show === "missing") return !x.kept && !x.gone && (x.state === "wanted" || x.state === "failed");
     if (show === "not-wanted") return !x.kept && !x.gone && x.state === "not-wanted";
@@ -69,18 +81,23 @@ function Audit({ source, reload }) {
     toast(`Downloading ${plural(ids.length, "video")}…`);
     reload();
   };
-  const notWanted = list.filter((x) => !x.kept && !x.gone && x.state === "not-wanted").map((x) => x.id);
+  // what "Download all" fetches: the not-wanted videos shown, so a search narrows it
+  const notWanted = shown.filter((x) => !x.kept && !x.gone && x.state === "not-wanted").map((x) => x.id);
   return html`<div>
     <div class="audit-head">
       <${AuditBadges} a=${a} kind=${source.kind} />
       <span class="spacer"></span>
+      <label class="search"><span class="visually-hidden">Search this ${source.kind}'s videos</span>${Icon.search(15)}
+        <input id="audit-search" type="search" placeholder="Search titles, ids, dates…" value=${query} onInput=${(e) => setQuery(e.target.value)}
+          onKeyDown=${(e) => e.key === "Escape" && query && (e.stopPropagation(), setQuery(""))} /></label>
       <div class="seg" role="group" aria-label="Show">
         ${[["all", "Listed"], ["missing", "Missing"], ["not-wanted", "Not wanted"], ["kept", "Kept"], ["gone", "Gone"]].map(([k, l]) => html`<button type="button" key=${k} aria-pressed=${show === k ? "true" : "false"} onClick=${() => setShow(k)}>${l}</button>`)}
       </div>
     </div>
     <p class="hint">What YouTube lists for this ${source.kind}, as of the last check (${source.last_checked ? ago(source.last_checked) : "never"}). ${a.missing + a.failed > 0 ? html`<button type="button" class="small" id="get-missing" onClick=${() => downloadMissing(id)}>${Icon.download(13)} Download the ${plural(a.missing + a.failed, "missing video")}</button>` : "Nothing wanted is missing."}
-      ${notWanted.length > 0 && show === "not-wanted" && html` <button type="button" class="small" id="get-not-wanted" onClick=${() => getAll(notWanted)}>${Icon.download(13)} Download all ${notWanted.length}</button>`}</p>
-    ${!shown.length ? html`<p class="muted">${list.length ? "Nothing in this part of the list." : "Nothing has been listed yet; press Check now."}</p>` : html`<table class="list audit-list" id="upstream">
+      ${notWanted.length > 0 && show === "not-wanted" && html` <button type="button" class="small" id="get-not-wanted" onClick=${() => getAll(notWanted)}>${Icon.download(13)} Download ${words.length ? `these ${notWanted.length}` : `all ${notWanted.length}`}</button>`}</p>
+    ${words.length > 0 && shown.length > 0 && html`<p class="muted" id="audit-found">${plural(shown.length, "video")} ${shown.length === 1 ? "matches" : "match"} “${query.trim()}”</p>`}
+    ${!shown.length ? html`<p class="muted" id="audit-none">${words.length ? `No video here matches “${query.trim()}”.` : list.length ? "Nothing in this part of the list." : "Nothing has been listed yet; press Check now."}</p>` : html`<table class="list audit-list" id="upstream">
       <thead><tr><th></th><th>Video</th><th class="num">Length</th><th class="num">Views</th><th>State</th><th></th></tr></thead>
       <tbody>${shown.map((x, i) => { const [cls, label] = stateOf(x); return html`<tr key=${x.id} data-video=${x.id} data-state=${x.kept ? "kept" : x.state}>
         <td class="num mono muted">${source.kind === "playlist" ? i + 1 : ""}</td>
