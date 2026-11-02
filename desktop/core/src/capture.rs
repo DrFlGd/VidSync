@@ -342,6 +342,7 @@ pub fn place(lib: &mut Library, d: Downloaded, video_id: &str, quality: Quality,
         tags: vec![],
         extra: Default::default(),
     };
+    lib.save_video(&key, &v)?;
     let mut c = lib.channels.get(&key).cloned().context("the channel vanished")?;
     c.videos.retain(|x| x.id != video_id || videos_dir.join(&x.folder).is_dir());
     c.videos.push(v.clone());

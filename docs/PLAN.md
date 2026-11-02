@@ -26,12 +26,13 @@ The core shells out to `yt-dlp` (JSON out: `-J --flat-playlist` to list a source
 
 ```
 Vid Sync/                                   (~/Vid Sync until another folder is chosen)
-  _library/library.json                     { format: 1, id, name, created, settings }
+  _library/library.json                     { format: 2, id, name, created, settings }
   _library/creators.json                    the user's groups of channels
   youtube.com/channels/@handle/
-    channel.json                            details, follow, upstream listing, kept videos, tags
+    channel.json                            details, follow, upstream listing, creator, tags, notes
     avatar.jpg
     videos/2026-10-29 Title of the video [dQw4w9WgXcQ]/
+      video.json                            this video's record (format 2; see below)
       Title of the video [dQw4w9WgXcQ].mp4  (or .mkv/.webm/.m4a: whatever yt-dlp made)
       Title of the video [dQw4w9WgXcQ].info.json
       Title of the video [dQw4w9WgXcQ].jpg
@@ -42,7 +43,8 @@ Vid Sync/                                   (~/Vid Sync until another folder is 
 
 - **A video lives in its channel's folder**, whoever asked for it: a channel being followed, a playlist being followed, or a link pasted by hand. A playlist is a list of video ids (in the playlist's order) pointing into channel folders, so a video in three playlists is on disk once. A channel that isn't followed but holds videos (from a playlist, or a pasted link) has `channel.json` with `follow.mode = "none"`; it's listed under Channels like the others and can be followed later.
 - A channel's folder is named for its handle (`@handle`, what the user sees in links), a playlist's for its id. The id in the JSON is what counts; the folder is found by scanning, as in Repo Sync.
-- `channel.json`: `source` (kind, id, handle, url), `details` (name, description, avatar, subscribers, video count, as last listed), `follow` (mode, which tabs, quality, subtitles, hours between checks), `creator`, `tags`, `notes`, `last_checked`, `last_changed`, `last_error`, `upstream` (every video listed, newest first: id, title, duration, upload date, when it was first seen, `state`: wanted / not-wanted / members-only / live / failed with the error / skipped by the user), `videos` (what's kept: id, folder, file, title, upload date, duration, bytes, width, height, downloaded, formats). Nothing in `videos/` is deleted except by the user.
+- `channel.json`: `source` (kind, id, handle, url), `details` (name, description, avatar, subscribers, video count, as last listed), `follow` (mode, which tabs, quality, subtitles, hours between checks), `creator`, `tags`, `notes`, `last_checked`, `last_changed`, `last_error`, `upstream` (every video listed, newest first: id, title, duration, upload date, when it was first seen, `state`: wanted / not-wanted / members-only / live / failed with the error / skipped by the user). Nothing in `videos/` is deleted except by the user.
+- **Each video's folder describes itself (format 2, decided 2026-11-02 with the owner):** `video.json` beside the media holds the video's record (id, file, title, upload date, duration, bytes, width, height, codecs, downloaded, quality, thumbnail, subtitles, the info file, and the user's own state: tags, watched, the position to resume from). A folder moved or copied on its own keeps everything about it, and saving a resume position rewrites one small file, not the channel's. The folder name isn't stored (it's where the file was found). Format 1 libraries (0.1) kept these records in `channel.json` under `videos`; opening one moves each record into its folder and drops the list from `channel.json`.
 - **Nothing is replaced.** A download goes into `.partial/` and is moved into place when complete, so Stop or a crash never leaves half a video among the kept ones. A video downloaded again (a better quality asked for) gets a new folder stamped with its quality beside the old one.
 
 ### Sources and links

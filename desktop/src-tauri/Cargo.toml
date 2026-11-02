@@ -3,6 +3,7 @@ name = "vid-sync"
 description = "Vid Sync desktop app"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 default-run = "vid-sync"
 
 [build-dependencies]

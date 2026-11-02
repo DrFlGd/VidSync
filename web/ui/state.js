@@ -95,7 +95,11 @@ export async function loadJobs() {
     const key = newest ? `${newest.job.id}:${newest.finished}` : null;
     // something finished (or started): the library has changed
     if (key !== lastFinished || prevBusy !== busy(j) || busy(j)) {
-      if (lastFinished !== undefined && key !== lastFinished && newest) announce(newest);
+      if (lastFinished !== undefined && key !== lastFinished && newest) {
+        announce(newest);
+        // the library may be somewhere else now
+        if (newest.job.type === "move") { try { ui.set({ info: { ...(await platform.refreshInfo()) }, filter: null }); } catch { /* keep */ } }
+      }
       lastFinished = key;
       await reloadAll();
     }

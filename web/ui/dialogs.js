@@ -8,6 +8,11 @@ import { FollowFields } from "./follow.js";
 
 export const openAdd = (text = "") => ui.set({ dialog: { type: "add", text } });
 
+/** Ask which of several things to do. Resolves to the picked choice's value, or null. */
+export function chooseDialog({ title, body, choices }) {
+  return new Promise((resolve) => ui.set({ dialog: { type: "choose", title, body, choices, resolve } }));
+}
+
 /** Ask before doing something that can't be undone. Resolves true to go ahead. */
 export function confirmDialog({ title, body, ok = "Remove", danger = true }) {
   return new Promise((resolve) => ui.set({ dialog: { type: "confirm", title, body, ok, danger, resolve } }));
@@ -105,11 +110,25 @@ function ConfirmDialog({ d }) {
   </div>`;
 }
 
+function ChooseDialog({ d }) {
+  const close = (v) => { ui.set({ dialog: null }); d.resolve(v); };
+  const first = useRef(null);
+  useEffect(() => first.current?.focus(), []);
+  return html`<div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="choose-title">
+    <h2 id="choose-title">${d.title}</h2>
+    <p>${d.body}</p>
+    <div class="buttons">
+      <button type="button" onClick=${() => close(null)}>Cancel</button>
+      ${d.choices.map((c, i) => html`<button type="button" key=${c.value} id=${"choose-" + c.value} ref=${i === 0 ? first : null} class=${c.cls || ""} onClick=${() => close(c.value)}>${c.label}</button>`)}
+    </div>
+  </div>`;
+}
+
 export function Dialogs() {
   const d = useStore(ui, (s) => s.dialog);
   if (!d) return null;
-  const dismiss = (e) => { if (e.target === e.currentTarget) { if (d.resolve) d.resolve(false); ui.set({ dialog: null }); } };
+  const dismiss = (e) => { if (e.target === e.currentTarget) { if (d.resolve) d.resolve(d.type === "choose" ? null : false); ui.set({ dialog: null }); } };
   return html`<div class="backdrop" onMouseDown=${dismiss}>
-    ${d.type === "add" ? html`<${AddDialog} text=${d.text} />` : html`<${ConfirmDialog} d=${d} />`}
+    ${d.type === "add" ? html`<${AddDialog} text=${d.text} />` : d.type === "choose" ? html`<${ChooseDialog} d=${d} />` : html`<${ConfirmDialog} d=${d} />`}
   </div>`;
 }

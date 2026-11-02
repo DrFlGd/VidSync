@@ -358,7 +358,7 @@ table.list .actions button { padding: 3px 6px; }
 .audit-head .spacer { flex: 1; }
 .sublist { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; }
 
-.source { display: grid; grid-template-columns: minmax(0, 1fr) 320px; flex: 1; min-height: 0; }
+.source-page { display: grid; grid-template-columns: minmax(0, 1fr) 320px; flex: 1; min-height: 0; }
 .source-main { overflow: auto; padding: 18px 24px 60px; min-width: 0; }
 .source-head .source-title { display: flex; align-items: center; gap: 14px; }
 .inspector .follow { display: grid; gap: 10px; }
@@ -385,7 +385,7 @@ table.list .actions button { padding: 3px 6px; }
 .tools .tool:first-of-type { border-top: 0; }
 
 @media (max-width: 1100px) {
-  .source { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .source-page { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .source-main { overflow: visible; }
 }
 

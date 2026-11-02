@@ -15,7 +15,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -38,6 +38,8 @@ pub enum JobKind {
     Video { id: String, video: String },
     /// Fetch or update yt-dlp or ffmpeg.
     Tool { name: String },
+    /// Move the whole library folder to another place, then open it there.
+    Move { to: String },
 }
 
 impl JobKind {
@@ -195,6 +197,21 @@ impl App {
                 }
                 Ok(self.app_info())
             }
+            "library_inspect" => self.library_inspect(Path::new(a["path"].as_str().context("no folder given")?)),
+            "library_move" => {
+                let to = a["path"].as_str().context("no folder given")?.trim().to_string();
+                let i = self.library_inspect(Path::new(&to))?;
+                if !i["can_move"].as_bool().unwrap_or(false) {
+                    bail!("{}", i["why_not"].as_str().unwrap_or("The library can't be moved there."));
+                }
+                {
+                    let j = self.jobs.lock().unwrap();
+                    if j.current.is_some() || !j.queue.is_empty() {
+                        bail!("Wait for the jobs in Activity to finish (or stop them) before moving the library.");
+                    }
+                }
+                Ok(json!({ "job": self.enqueue(JobKind::Move { to: to.clone() }, "library".into(), format!("Moving the library to {to}"), "you") }))
+            }
             "prefs_get" => Ok(self.prefs.get()),
             "prefs_set" => {
                 self.prefs.set(&a["prefs"])?;
@@ -347,11 +364,9 @@ impl App {
                 let video = vid()?;
                 let tags = tags_of(&a["tags"]);
                 self.with_lib(|l| {
-                    let mut c = l.channels.get(&key).cloned().context("That channel isn't in the library.")?;
-                    let v = c.videos.iter_mut().find(|v| v.id == video).context("That video isn't in the library.")?;
+                    let mut v = l.channels.get(&key).and_then(|c| c.videos.iter().find(|v| v.id == video)).cloned().context("That video isn't in the library.")?;
                     v.tags = tags;
-                    l.put_channel(c)?;
-                    Ok(())
+                    l.put_video(&key, v)
                 })?;
                 self.video(&key, &video)
             }
@@ -911,6 +926,7 @@ impl App {
                 JobKind::Missing { id } => self.run_check(id, true, &run),
                 JobKind::Video { id, video } => self.run_video(id, video, &run),
                 JobKind::Tool { name } => self.run_tool(name, &run),
+                JobKind::Move { to } => self.run_move(to, &run),
             };
             let mut j = self.jobs.lock().unwrap();
             j.current = None;
@@ -920,6 +936,68 @@ impl App {
             };
             j.recent.push_front(Finished { job, finished: now_iso(), ok, message, outcome });
             j.recent.truncate(50);
+        }
+    }
+
+    /// What's at a folder the user picked for the library, so the page can ask the
+    /// right question: open the library there, start one, or move this one there.
+    fn library_inspect(&self, p: &Path) -> Result<Value> {
+        let current = self.lib.lock().unwrap().as_ref().map(|l| (l.root.clone(), l.channels.len() + l.playlists.len(), l.video_count()));
+        let exists = p.is_dir();
+        let empty = !exists || std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(false);
+        let is_library = p.join(library::META_DIR).join("library.json").is_file();
+        let (same, inside, has_content) = match &current {
+            Some((root, sources, videos)) => {
+                let canon = |x: &Path| std::fs::canonicalize(x).unwrap_or_else(|_| x.to_path_buf());
+                let (r, t) = (canon(root), canon(p));
+                let t_parent = p.parent().map(canon);
+                (r == t, t.starts_with(&r) || t_parent.is_some_and(|tp| tp.starts_with(&r)), sources + videos > 0)
+            }
+            None => (false, false, false),
+        };
+        let why_not = if current.is_none() {
+            "No library is open to move."
+        } else if same {
+            "That's the library's folder already."
+        } else if inside {
+            "A folder inside the library can't hold it."
+        } else if !empty {
+            "Pick an empty (or new) folder to move the library into."
+        } else {
+            ""
+        };
+        Ok(json!({
+            "path": p.display().to_string(),
+            "exists": exists,
+            "empty": empty,
+            "is_library": is_library,
+            "same": same,
+            "current_has_content": has_content,
+            "current": current.as_ref().map(|c| json!({ "path": c.0.display().to_string(), "sources": c.1, "videos": c.2 })),
+            "can_move": why_not.is_empty(),
+            "why_not": why_not,
+        }))
+    }
+
+    fn run_move(&self, to: &str, run: &Run) -> Result<Outcome> {
+        let from = self.lib.lock().unwrap().as_ref().map(|l| l.root.clone()).context("No library is open.")?;
+        let to = PathBuf::from(to);
+        set_stage(run.stage, format!("Moving the library to {}", to.display()));
+        // closed while it moves, so nothing writes into it halfway
+        *self.lib.lock().unwrap() = None;
+        *self.lib_error.lock().unwrap() = Some(format!("The library is being moved to {}. It opens there when the move is done.", to.display()));
+        match crate::util::move_tree(&from, &to, run.progress) {
+            Ok(()) => {
+                self.open_library(to.clone());
+                if let Some(e) = self.lib_error.lock().unwrap().clone() {
+                    bail!("The files were moved to {}, but the library there couldn't be opened: {e}", to.display());
+                }
+                Ok(Outcome { note: Some(format!("Moved the library to {}", to.display())), ..Default::default() })
+            }
+            Err(e) => {
+                self.open_library(from.clone());
+                Err(e.context(format!("The library stays at {}", from.display())))
+            }
         }
     }
 

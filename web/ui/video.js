@@ -50,7 +50,7 @@ export function VideoPage({ channel, video }) {
     try { await api("video_delete", { channel, video }); await reloadAll(); toast("Deleted"); location.hash = `#/source/${encodeURIComponent(v.source)}`; } catch (e) { toast(errText(e), 6000); }
   };
   const seek = (t) => { if (player.current) { player.current.currentTime = t; player.current.play?.(); } };
-  return html`<div class="source video-page">
+  return html`<div class="source-page video-page">
     <div class="source-main">
       <nav class="crumbs" aria-label="Where"><a href="#/">Videos</a><span>/</span><a href=${`#/source/${encodeURIComponent(v.source)}`}>${v.channel_name}</a></nav>
       <div class="player" id="player">

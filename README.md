@@ -19,9 +19,11 @@ The design and the plan are in [docs/PLAN.md](docs/PLAN.md). The stack and look 
 Vid Sync/                                 (~/Vid Sync until you choose another folder)
   _library/library.json                   the library's id, name and settings (schedule, defaults for new sources)
   youtube.com/channels/@handle/
-    channel.json                          details, follow settings, creator, tags, what's listed upstream, every kept video
+    channel.json                          details, follow settings, creator, tags, notes, what's listed upstream
     avatar.jpg
-    videos/2026-03-01 Title [videoid]/    one folder per video: the media, its .info.json, thumbnail, subtitles
+    videos/2026-03-01 Title [videoid]/    one folder per video, describing itself:
+      video.json                          the video's record: title, dates, size, quality, your tags, watched
+      Title [videoid].mp4                 the media, its .info.json, thumbnail and subtitles beside it
   youtube.com/playlists/PLxxxx/
     playlist.json                         details, follow settings, the ordered list of its videos (kept in their channels)
 ```
@@ -45,4 +47,4 @@ CI (`.github/workflows/desktop.yml`) builds and tests the Windows app on every p
 
 ## Licence
 
-Not chosen yet. Third-party code, programs and fonts are listed in [THIRD_PARTY.md](THIRD_PARTY.md). yt-dlp and ffmpeg are run as separate programs; downloading videos is subject to YouTube's terms and the rights of their creators.
+MIT ([LICENSE](LICENSE)). Third-party code, programs and fonts are listed in [THIRD_PARTY.md](THIRD_PARTY.md). yt-dlp and ffmpeg are run as separate programs; downloading videos is subject to YouTube's terms and the rights of their creators.

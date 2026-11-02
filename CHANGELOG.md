@@ -58,6 +58,17 @@ See `docs/FUTURE.md` (written 2026-11-02, sized and ordered): a tray icon so che
 
 ## Unreleased
 
+After trying 0.1.0, Jerred asked for these:
+
+- **Channel cards on Sources show properly again.** A layout rule meant for a source's page also caught the cards, squeezing each channel's name into a column one letter wide.
+- **Moving the library.** Choosing another folder in Settings now asks whether to move the library there (every file, with progress in Activity; renamed in place when it's on the same drive) or start a new, empty library there and leave this one where it is. Picking a folder that's already a library just opens it.
+- **Each video's folder describes itself.** A video's record (title, dates, size, quality, your tags) is now in `video.json` beside its files, not in the channel's `channel.json`. A library from 0.1 is converted the first time it's opened; nothing is lost and its videos stay where they are.
+- **Licensed under MIT.**
+
+For agents: library format 2. `Channel.videos` is filled from `videos/*/video.json` on scan and never written to `channel.json` (`#[serde(skip_serializing)]`; read once from a format 1 file to migrate). Save a video's record with `Library::put_video`/`save_video`; `Video.folder` is where the file was found, not stored. New commands `library_inspect`, `library_move` and the `move` job (`util::move_tree`); the page's `chooseDialog` asks between several actions.
+
+## 0.1.0 (2026-11-02)
+
 First version of Vid Sync:
 
 - **Add channels, playlists and videos by their links**, one or many at once (paste a link anywhere in the window, or press N). Each link is read as you type, and anything already in the library is pointed out. A video link can also add the playlist it came from.

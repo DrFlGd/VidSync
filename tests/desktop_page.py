@@ -132,7 +132,13 @@ def playlist_json(pid):
 
 
 def kept(key):
-    return sorted(v["id"] for v in channel_json(key)["videos"])
+    return sorted(v["id"] for v in videos_of(key))
+
+
+def videos_of(key):
+    """Each kept video's video.json under a channel's folder."""
+    vids = lib / "youtube.com/channels" / key / "videos"
+    return [json.loads((d / "video.json").read_text(encoding="utf-8")) for d in sorted(vids.iterdir()) if (d / "video.json").is_file()] if vids.is_dir() else []
 
 
 def upstream(key, kind="channel"):
@@ -189,6 +195,9 @@ try:
         check(folders == ["2026-01-01 First video [vid00000001]", "2026-01-03 Third video [vid00000003]"] or len(folders) == 2, f"each video has a dated folder {folders}")
         vdir = lib / DEMO / "videos" / folders[0]
         names = sorted(f.suffix for f in vdir.iterdir())
+        side = json.loads((vdir / "video.json").read_text(encoding="utf-8")) if (vdir / "video.json").is_file() else {}
+        check(side.get("id") in ("vid00000001", "vid00000003") and side.get("file", "").startswith(side.get("title", "?")), f"each video's folder has its own video.json {side}")
+        check("videos" not in channel_json("@Demo"), "channel.json holds no video records (they're in each folder)")
         check((".webm" in names or ".mp4" in names) and ".json" in names and ".jpg" in names, f"the media, info and thumbnail are kept together {names}")
         check(not (lib / "_library/.partial").exists() or not any((lib / "_library/.partial").iterdir()), "nothing is left in the partial folder")
         pl = playlist_json("PLdemo000000000000")
@@ -256,7 +265,7 @@ try:
         wait_for(lambda: page.locator("#upstream tr[data-video=vid00000005][data-state=kept]").count() == 1, "and shows it as kept")
         page.click("#check-now")
         wait_for(lambda: idle() and "Up to date" in recent()[0]["message"], "a check with nothing new says it's up to date")
-        check(len(channel_json("@Demo")["videos"]) == 4, "nothing is downloaded twice")
+        check(len(videos_of("@Demo")) == 4, "nothing is downloaded twice")
 
         # ---- a channel whose videos are all wanted; one fails -----------------------
         page.keyboard.press("n")
@@ -290,6 +299,10 @@ try:
         wcard = page.locator(f".card.source[data-id='{WORK}']")
         wait_for(lambda: page.evaluate(f"document.querySelector(\".card.source[data-id='{WORK}'] .avatar img\")?.naturalWidth") == 8, "a channel card shows its avatar")
         check("skipped" in wcard.inner_text().lower() or "1" in wcard.inner_text(), "a card carries the audit's counts")
+        box = lambda sel: page.locator(sel).first.bounding_box()
+        card, title, chips = box(f".card.source[data-id='{WORK}']"), box(f".card.source[data-id='{WORK}'] h3"), box(f".card.source[data-id='{WORK}'] .audit-chips")
+        check(title["width"] > card["width"] * 0.4 and title["height"] < 40, f"a source card's name runs across the card, not down it (card {card['width']:.0f}px, name {title['width']:.0f}x{title['height']:.0f}px)")
+        check(chips["width"] > card["width"] * 0.6 and chips["height"] < 60, f"a source card's counts sit in a row ({chips['width']:.0f}x{chips['height']:.0f}px)")
         page.screenshot(path=str(a.out / "08-sources.png"))
         for key in ("@Demo", "@Workshop"):
             page.goto(BASE + f"/#/source/youtube.com/channels/{key}")
@@ -363,7 +376,7 @@ try:
         page.screenshot(path=str(a.out / "11-video.png"))
         page.fill("#tag-input", "keeper")
         page.press("#tag-input", "Enter")
-        wait_for(lambda: next(v for v in channel_json("@Workshop")["videos"] if v["id"] == "wrk00000001")["tags"] == ["keeper"], "a tag is saved on the video")
+        wait_for(lambda: next(v for v in videos_of("@Workshop") if v["id"] == "wrk00000001")["tags"] == ["keeper"], "a tag is saved on the video")
         page.click("#open-system")
         wait_for(lambda: any(o["cmd"] == "open_path" and "wrk00000001" in json.dumps(o["args"]) for o in json.loads(urllib.request.urlopen(BASE + "/test/opened").read())), "Open in player hands the file to the system")
 
@@ -433,6 +446,10 @@ try:
         page.goto(BASE + "/#/settings")
         page.wait_for_selector("#change-library")
         page.click("#change-library")
+        page.wait_for_selector("#choose-move")
+        check("Move the library there" in page.inner_text(".dialog") and page.is_visible("#choose-open"), "changing the folder asks whether to move the library there or start a new one")
+        page.screenshot(path=str(a.out / "12b-move-or-new.png"))
+        page.click("#choose-open")
         wait_for(lambda: (other / "_library/library.json").is_file(), "a new library folder is set up")
         wait_for(lambda: other.name in page.inner_text("#library-path"), "Settings shows the new folder")
         page.goto(BASE + "/#/")
@@ -442,6 +459,34 @@ try:
         page.reload()
         page.wait_for_selector(".card.video")
         check(page.locator(".card.video").count() == 5, "the first library opens again with its videos")
+
+        # ---- moving the library ------------------------------------------------------------------------
+        moved = home / "Moved" / "Videos"
+        post("/test/pick", {"path": str(other)})  # a library already: opened, nothing to ask
+        page.goto(BASE + "/#/settings")
+        page.wait_for_selector("#change-library")
+        page.click("#change-library")
+        wait_for(lambda: other.name in page.inner_text("#library-path"), "picking an existing library opens it without asking")
+        api("library_open", {"path": str(lib)})
+        page.reload()
+        page.wait_for_selector("#change-library")
+        post("/test/pick", {"path": str(moved)})
+        page.click("#change-library")
+        page.wait_for_selector("#choose-move")
+        check("1 source and 5 videos" in page.inner_text(".dialog"), f"the question says what the library holds: {page.inner_text('.dialog')[:200]!r}")
+        page.click("#choose-move")
+        wait_for(lambda: (moved / "_library/library.json").is_file() and not lib.exists(), "Move takes every file to the new folder and leaves none behind", 60)
+        wait_for(lambda: str(moved) in api("app_info").get("library", {}).get("path", ""), "the moved library is the one open")
+        check(page.evaluate("location.hash") == "#/activity", "the move is followed in Activity")
+        page.goto(BASE + "/#/settings")
+        wait_for(lambda: "Moved" in page.inner_text("#library-path"), "Settings shows where it went")
+        check(any(f["job"]["type"] == "move" and f["ok"] for f in recent()), "Activity records the move")
+        lib = moved
+        page.goto(BASE + "/#/")
+        page.wait_for_selector(".card.video")
+        wait_for(lambda: page.locator(".card.video").count() == 5, "the moved library shows its videos")
+        thumb = page.evaluate("document.querySelector('.card.video img')?.getAttribute('src') || ''")
+        check(thumb.startswith("/library/"), "and their pictures load from the new place")
 
         # ---- the look -------------------------------------------------------------------------------
         page.click("#theme-toggle")

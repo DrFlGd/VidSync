@@ -5,7 +5,8 @@ import { useStore } from "../lib/store.js";
 import { ui, api, ctx, toast, errText, setPref, reloadAll, poke, EVERY, DEFAULT_FOLLOW } from "./state.js";
 import { Icon } from "./icons.js";
 import { FollowFields } from "./follow.js";
-import { ago, when } from "../lib/format.js";
+import { ago, when, plural } from "../lib/format.js";
+import { chooseDialog } from "./dialogs.js";
 
 const BROWSERS = [["chrome", "Chrome"], ["edge", "Edge"], ["firefox", "Firefox"], ["brave", "Brave"], ["vivaldi", "Vivaldi"], ["opera", "Opera"], ["chromium", "Chromium"], ["safari", "Safari"]];
 
@@ -48,6 +49,32 @@ export function SettingsPage() {
     const p = await ctx().pickFolder("Choose the library folder");
     if (!p) return;
     try {
+      const at = await api("library_inspect", { path: p });
+      if (at.same) { toast("That's the library's folder already"); return; }
+      let action = "open";
+      // this library has something in it and the new place isn't a library: move it there, or start afresh?
+      if (!at.is_library && at.current_has_content) {
+        const cur = at.current;
+        const held = `${plural(cur.sources, "source")} and ${plural(cur.videos, "video")}`;
+        action = await chooseDialog({
+          title: "Move the library there?",
+          body: at.can_move
+            ? `The library at ${cur.path} holds ${held}. Move all of its files to ${p}, or start a new, empty library there and leave this one where it is?`
+            : `${at.why_not} Starting a new, empty library at ${p} leaves this one (${held}) where it is.`,
+          choices: [
+            ...(at.can_move ? [{ value: "move", label: "Move the library there", cls: "primary" }] : []),
+            { value: "open", label: "Start a new library there" },
+          ],
+        });
+        if (!action) return;
+      }
+      if (action === "move") {
+        await api("library_move", { path: p });
+        toast(`Moving the library to ${p}…`);
+        poke();
+        location.hash = "#/activity";
+        return;
+      }
       const i = await api("library_open", { path: p });
       ui.set({ info: i, filter: null });
       await reloadAll();
@@ -67,7 +94,7 @@ export function SettingsPage() {
         <div class="row"><span class="path" id="library-path">${info.library?.path || "No library open"}</span>
           <button type="button" id="change-library" onClick=${change}>Change…</button>
           ${info.library && html`<button type="button" onClick=${() => ctx().openPath(info.library.path)}>${Icon.folder(15)} Open</button>`}</div>
-        <p class="hint">Each channel gets a folder in it (<span class="mono">youtube.com/channels/@handle</span>) holding <span class="mono">channel.json</span> and one folder per video under <span class="mono">videos/</span>: the video, its picture, its metadata and subtitles. Playlists are lists in <span class="mono">youtube.com/playlists/</span>. The folder works without the app and can be moved, synced or opened on another computer.</p>
+        <p class="hint">Each channel gets a folder in it (<span class="mono">youtube.com/channels/@handle</span>) holding <span class="mono">channel.json</span> and one folder per video under <span class="mono">videos/</span>: the video, its picture, its metadata and subtitles, and its own <span class="mono">video.json</span>. Playlists are lists in <span class="mono">youtube.com/playlists/</span>. The folder works without the app and can be moved, synced or opened on another computer.</p>
       </div></section>
       ${lib && html`<section><h2 class="section-head">Checks</h2><div class="panel">
         <label class="field"><span>Check every followed source</span>

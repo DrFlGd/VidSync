@@ -1,9 +1,14 @@
 //! The library folder: `_library/library.json` (its id, name and settings), one
 //! folder per channel at `youtube.com/channels/<@handle>/` holding `channel.json`
-//! and `videos/<date> <title> [<id>]/` (one folder per kept video), and one per
-//! playlist at `youtube.com/playlists/<id>/playlist.json`. Everything the app
-//! shows comes from these files, so a library can be copied, synced or opened
-//! on another computer (docs/PLAN.md, "The library folder").
+//! and `videos/<date> <title> [<id>]/` (one folder per kept video, each with its
+//! own `video.json`), and one per playlist at `youtube.com/playlists/<id>/playlist.json`.
+//! Everything the app shows comes from these files, so a library can be copied,
+//! synced or opened on another computer, and a video's folder describes itself
+//! when it's moved on its own (docs/PLAN.md, "The library folder").
+//!
+//! Format 1 (0.1) kept the videos' records in channel.json; opening such a
+//! library writes each one to its folder's video.json and drops them from
+//! channel.json (format 2).
 
 use crate::util::{now_iso, read_json_object, write_json};
 use anyhow::{bail, Context, Result};
@@ -12,7 +17,7 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT: u64 = 1;
+pub const FORMAT: u64 = 2;
 pub const META_DIR: &str = "_library";
 pub const HOST: &str = "youtube.com";
 pub const CHANNELS_DIR: &str = "channels";
@@ -20,6 +25,8 @@ pub const PLAYLISTS_DIR: &str = "playlists";
 pub const CHANNEL_FILE: &str = "channel.json";
 pub const PLAYLIST_FILE: &str = "playlist.json";
 pub const VIDEOS_DIR: &str = "videos";
+/// A kept video's own record, in its folder.
+pub const VIDEO_FILE: &str = "video.json";
 /// Downloads in progress, under `_library/` (removed before each job).
 pub const PARTIAL_DIR: &str = ".partial";
 
@@ -168,7 +175,9 @@ pub struct Listed {
 #[serde(default)]
 pub struct Video {
     pub id: String,
-    /// Under `videos/`.
+    /// Under `videos/`: where the video.json was found (not written into it, so
+    /// a folder renamed by hand still reads right).
+    #[serde(skip_serializing)]
     pub folder: String,
     /// The media file, relative to the folder.
     pub file: String,
@@ -249,7 +258,10 @@ pub struct Channel {
     pub last_error: String,
     /// Every video listed upstream, newest first.
     pub upstream: Vec<Listed>,
-    /// Every video kept, in download order.
+    /// Every video kept, in download order. Read from each video's video.json
+    /// (format 2); never written into channel.json, but read from it once to
+    /// move a format 1 library's records out.
+    #[serde(skip_serializing)]
     pub videos: Vec<Video>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -505,6 +517,7 @@ impl Library {
             v = json!({ "format": FORMAT, "id": new_id(), "name": name, "created": now_iso(), "settings": Settings::default() });
             write_json(&file, &v)?;
         }
+        let old_format = v["format"].as_u64().unwrap_or(FORMAT);
         let settings: Settings = serde_json::from_value(v["settings"].clone()).unwrap_or_default();
         let mut lib = Self {
             root: root.to_path_buf(),
@@ -516,6 +529,10 @@ impl Library {
             unreadable: vec![],
         };
         lib.scan();
+        if old_format < FORMAT {
+            v["format"] = json!(FORMAT);
+            write_json(&file, &v)?;
+        }
         Ok(lib)
     }
 
@@ -533,7 +550,21 @@ impl Library {
             }
             let folder = e.file_name().to_string_lossy().into_owned();
             match std::fs::read(&file).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice::<Channel>(&b)?)) {
-                Ok(c) if c.key() == folder => {
+                Ok(mut c) if c.key() == folder => {
+                    let videos_dir = dir.join(VIDEOS_DIR);
+                    if !c.videos.is_empty() {
+                        // format 1: the records move to each video's folder
+                        for v in &c.videos {
+                            let side = videos_dir.join(&v.folder).join(VIDEO_FILE);
+                            if videos_dir.join(&v.folder).is_dir() && !side.exists() {
+                                if let Err(e) = write_json(&side, &serde_json::to_value(v).unwrap_or_default()) {
+                                    self.unreadable.push((format!("{HOST}/{CHANNELS_DIR}/{folder}/{VIDEOS_DIR}/{}", v.folder), format!("couldn't write its video.json: {e}")));
+                                }
+                            }
+                        }
+                        let _ = write_json(&file, &serde_json::to_value(&c).unwrap_or_default());
+                    }
+                    c.videos = read_videos(&videos_dir, &mut self.unreadable, &format!("{HOST}/{CHANNELS_DIR}/{folder}"));
                     self.channels.insert(folder, c);
                 }
                 Ok(c) => self.unreadable.push((format!("{HOST}/{CHANNELS_DIR}/{folder}"), format!("its channel.json is for {}", c.key()))),
@@ -576,6 +607,26 @@ impl Library {
 
     pub fn partial_dir(&self) -> PathBuf {
         self.root.join(META_DIR).join(PARTIAL_DIR)
+    }
+
+    /// Write a kept video's video.json (its folder must exist).
+    pub fn save_video(&self, key: &str, v: &Video) -> Result<()> {
+        let dir = self.channel_folder(key).join(VIDEOS_DIR).join(crate::util::safe_rel(Path::new(&v.folder)).context("not a video's folder")?);
+        if !dir.is_dir() {
+            bail!("the video's folder {} is missing", dir.display());
+        }
+        write_json(&dir.join(VIDEO_FILE), &serde_json::to_value(v)?)
+    }
+
+    /// Save a kept video's record and put it in its channel (in memory).
+    pub fn put_video(&mut self, key: &str, v: Video) -> Result<()> {
+        self.save_video(key, &v)?;
+        let c = self.channels.get_mut(key).context("That channel isn't in the library.")?;
+        match c.videos.iter_mut().find(|x| x.id == v.id) {
+            Some(x) => *x = v,
+            None => c.videos.push(v),
+        }
+        Ok(())
     }
 
     pub fn save_channel(&self, c: &Channel) -> Result<()> {
@@ -652,6 +703,28 @@ impl Library {
     }
 }
 
+/// Every `videos/<folder>/video.json` under a channel, oldest download first.
+fn read_videos(videos_dir: &Path, unreadable: &mut Vec<(String, String)>, channel: &str) -> Vec<Video> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(videos_dir).into_iter().flatten().flatten() {
+        let file = e.path().join(VIDEO_FILE);
+        if !file.is_file() {
+            continue;
+        }
+        let folder = e.file_name().to_string_lossy().into_owned();
+        match std::fs::read(&file).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice::<Video>(&b)?)) {
+            Ok(mut v) if !v.id.is_empty() => {
+                v.folder = folder;
+                out.push(v);
+            }
+            Ok(_) => unreadable.push((format!("{channel}/{VIDEOS_DIR}/{folder}"), "its video.json has no id".into())),
+            Err(err) => unreadable.push((format!("{channel}/{VIDEOS_DIR}/{folder}"), err.to_string())),
+        }
+    }
+    out.sort_by(|a, b| a.downloaded.cmp(&b.downloaded).then_with(|| a.id.cmp(&b.id)));
+    out
+}
+
 fn new_id() -> String {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
@@ -671,8 +744,13 @@ mod tests {
         assert!(dir.join("_library/library.json").is_file());
         let mut c = Channel::new(ChannelRef { id: "UC123".into(), handle: "@demo".into(), url: "https://www.youtube.com/@demo".into() }, true, Follow::default());
         c.extra.insert("mine".into(), json!(42));
-        c.videos.push(Video { id: "abcdefghijk".into(), folder: "2026-01-01 A [abcdefghijk]".into(), bytes: 10, ..Default::default() });
         lib.put_channel(c).unwrap();
+        std::fs::create_dir_all(dir.join("youtube.com/channels/@demo/videos/2026-01-01 A [abcdefghijk]")).unwrap();
+        lib.put_video("@demo", Video { id: "abcdefghijk".into(), folder: "2026-01-01 A [abcdefghijk]".into(), bytes: 10, ..Default::default() }).unwrap();
+        assert!(dir.join("youtube.com/channels/@demo/videos/2026-01-01 A [abcdefghijk]/video.json").is_file());
+        let cj = std::fs::read_to_string(dir.join("youtube.com/channels/@demo/channel.json")).unwrap();
+        let cjv: Value = serde_json::from_str(&cj).unwrap();
+        assert!(!cj.contains("abcdefghijk") && cjv.get("videos").is_none(), "channel.json holds no video records");
         lib.put_playlist(Playlist::new(PlaylistRef { id: "PL1234567890abc".into(), url: String::new() }, Follow::default())).unwrap();
         assert!(dir.join("youtube.com/channels/@demo/channel.json").is_file());
         assert!(dir.join("youtube.com/playlists/PL1234567890abc/playlist.json").is_file());
@@ -687,10 +765,34 @@ mod tests {
         assert_eq!(split_id("youtube.com/channels/@demo"), Some((Kind::Channel, "@demo")));
         assert_eq!(split_id("youtube.com/playlists/PL1234567890abc"), Some((Kind::Playlist, "PL1234567890abc")));
         assert_eq!(split_id("youtube.com/other/x"), None);
-        assert_eq!(lib.find_video("abcdefghijk").map(|(k, _)| k), Some("@demo"));
+        assert_eq!(lib.find_video("abcdefghijk").map(|(k, v)| (k, v.folder.as_str(), v.bytes)), Some(("@demo", "2026-01-01 A [abcdefghijk]", 10)));
         assert_eq!(lib.channel_by_id("UC123").map(|c| c.key()), Some("@demo".into()));
         assert_eq!(lib.unreadable.len(), 1);
         assert!(lib.inside("../etc").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_1_records_move_to_each_video_folder() {
+        let dir = std::env::temp_dir().join(format!("vidsync-fmt1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ch = dir.join("youtube.com/channels/@old");
+        std::fs::create_dir_all(ch.join("videos/2026-01-01 Old [oldvideo001]")).unwrap();
+        std::fs::create_dir_all(dir.join("_library")).unwrap();
+        std::fs::write(dir.join("_library/library.json"), r#"{"format":1,"id":"x","name":"Old"}"#).unwrap();
+        std::fs::write(ch.join("channel.json"), r#"{"source":{"handle":"@old","id":"UCold"},"videos":[{"id":"oldvideo001","folder":"2026-01-01 Old [oldvideo001]","tags":["keep"],"bytes":5}]}"#).unwrap();
+        let lib = Library::open(&dir).unwrap();
+        assert_eq!(lib.channels["@old"].videos.len(), 1);
+        assert_eq!(lib.channels["@old"].videos[0].tags, vec!["keep".to_string()]);
+        let side: Value = serde_json::from_str(&std::fs::read_to_string(ch.join("videos/2026-01-01 Old [oldvideo001]/video.json")).unwrap()).unwrap();
+        assert_eq!(side["id"], "oldvideo001");
+        assert!(side.get("folder").is_none());
+        assert!(!std::fs::read_to_string(ch.join("channel.json")).unwrap().contains("oldvideo001"));
+        let meta: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("_library/library.json")).unwrap()).unwrap();
+        assert_eq!(meta["format"], 2);
+        // opened again: the same, nothing lost
+        let lib = Library::open(&dir).unwrap();
+        assert_eq!(lib.channels["@old"].videos[0].bytes, 5);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

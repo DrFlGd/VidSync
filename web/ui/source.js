@@ -218,7 +218,7 @@ export function SourcePage({ id, tab }) {
   };
   const a = s.audit;
   const tabs = [["videos", "Videos", s.videos_kept.length], ["audit", "Audit", a.missing + a.failed || null], ...(s.kind === "channel" ? [["playlists", "Playlists", s.playlists.length]] : [])];
-  return html`<div class="source">
+  return html`<div class="source-page">
     <div class="source-main">
       <header class="repo-head source-head">
         <nav class="crumbs" aria-label="Where"><a href="#/sources">Sources</a><span>/</span><span>${s.kind === "playlist" ? "playlist" : "channel"}</span></nav>

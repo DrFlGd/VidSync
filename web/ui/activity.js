@@ -14,6 +14,7 @@ const what = (j) => (j.type === "add" ? (j.link?.kind === "video" ? "Downloading
   : j.type === "missing" ? "Download missing"
   : j.type === "video" ? "Download one video"
   : j.type === "tool" ? "Fetching"
+  : j.type === "move" ? "Moving the library"
   : j.by === "schedule" ? "Scheduled check" : "Check");
 
 async function stop(job) {
