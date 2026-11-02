@@ -1,0 +1,19 @@
+[package]
+name = "vidsync-core"
+description = "Library folder, yt-dlp, sources, checks, the audit and commands for the Vid Sync desktop app"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "vidsync_core"
+
+[[bin]]
+name = "vidsync-cli"
+path = "src/bin/vidsync-cli.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = { version = "2", features = ["proxy-from-env"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

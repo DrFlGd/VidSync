@@ -1,0 +1,16 @@
+[package]
+name = "vid-sync"
+description = "Vid Sync desktop app"
+version.workspace = true
+edition.workspace = true
+default-run = "vid-sync"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+vidsync-core = { path = "../core" }

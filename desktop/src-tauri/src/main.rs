@@ -1,0 +1,150 @@
+// Vid Sync desktop app: the front end in web/ in a window, with the library
+// behind web/platform-desktop.js. Every command goes through
+// vidsync_core::api::App::call (the same table `vidsync-cli serve` uses for
+// testing); this file adds what needs the window: the folder and file dialogs,
+// the file manager, web links and the library:// protocol for videos and
+// pictures (with Range requests, so the player can seek).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use serde_json::Value;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
+use vidsync_core::api::{App, AppPaths};
+use vidsync_core::util::{byte_range, mime};
+
+struct AppState {
+    app: Arc<App>,
+}
+
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+/// One of the app's commands (see vidsync_core::api), answered as JSON.
+#[tauri::command]
+async fn api(cmd: String, args: Value, state: State<'_, AppState>) -> Result<Value, String> {
+    let app = state.app.clone();
+    tauri::async_runtime::spawn_blocking(move || app.call(&cmd, args)).await.map_err(err)?
+}
+
+/// Pick a folder (the library). None if cancelled.
+#[tauri::command]
+async fn pick_folder(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+    let picked = app.dialog().file().set_title(title.unwrap_or_else(|| "Choose a folder".into())).blocking_pick_folder();
+    match picked {
+        Some(p) => Ok(Some(p.into_path().map_err(err)?.display().to_string())),
+        None => Ok(None),
+    }
+}
+
+/// Pick a file (yt-dlp, ffmpeg, a cookies file). None if cancelled.
+#[tauri::command]
+async fn pick_file(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+    let picked = app.dialog().file().set_title(title.unwrap_or_else(|| "Choose a file".into())).blocking_pick_file();
+    match picked {
+        Some(p) => Ok(Some(p.into_path().map_err(err)?.display().to_string())),
+        None => Ok(None),
+    }
+}
+
+/// Show a file in the file manager.
+#[tauri::command]
+fn reveal(app: AppHandle, path: String) -> Result<(), String> {
+    app.opener().reveal_item_in_dir(PathBuf::from(path)).map_err(err)
+}
+
+/// Open a folder in the file manager, or a video in the system's player.
+#[tauri::command]
+fn open_path(app: AppHandle, path: String) -> Result<(), String> {
+    app.opener().open_path(path, None::<&str>).map_err(err)
+}
+
+/// Open a web link (a video's page on YouTube) in the default browser.
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only web links open in the browser.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(err)
+}
+
+/// The app's own addresses. Anything else a link leads to opens in the browser
+/// instead of replacing the app.
+fn in_app(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "library" | "asset" | "ipc" | "about" | "blob" | "data" => true,
+        "http" | "https" => url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h.ends_with(".localhost")),
+        _ => false,
+    }
+}
+
+fn open_outside(app: &AppHandle, url: &tauri::Url) {
+    if matches!(url.scheme(), "http" | "https" | "mailto") {
+        let _ = app.opener().open_url(url.to_string(), None::<&str>);
+    }
+}
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        // library://localhost/<path> (http://library.localhost/<path> on Windows): files in the open library
+        .register_asynchronous_uri_scheme_protocol("library", |ctx, request, responder| {
+            let app = ctx.app_handle().state::<AppState>().app.clone();
+            let path = request.uri().path().to_string();
+            let range = request.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
+            tauri::async_runtime::spawn_blocking(move || {
+                let response = match app.library_path(&path).and_then(|p| Ok(std::fs::read(p)?)) {
+                    Ok(data) => {
+                        let total = data.len() as u64;
+                        let b = tauri::http::Response::builder()
+                            .header("Content-Type", mime(&path))
+                            .header("Accept-Ranges", "bytes")
+                            // a picture is shown as a picture, never run as a page
+                            .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'self'")
+                            .header("Access-Control-Allow-Origin", "*");
+                        match range.as_deref().and_then(|r| byte_range(r, total)) {
+                            Some((s, e)) => b.status(206).header("Content-Range", format!("bytes {s}-{e}/{total}")).body(data[s as usize..=e as usize].to_vec()),
+                            None => b.status(200).body(data),
+                        }
+                    }
+                    Err(e) => tauri::http::Response::builder().status(404).body(e.to_string().into_bytes()),
+                };
+                responder.respond(response.unwrap_or_else(|_| tauri::http::Response::new(Vec::new())));
+            });
+        })
+        .setup(|app| {
+            let paths = AppPaths {
+                config_dir: app.path().app_config_dir()?,
+                library_url: if cfg!(windows) { "http://library.localhost/".into() } else { "library://localhost/".into() },
+            };
+            let core = App::new(paths, std::time::Duration::from_secs(30))?;
+            app.manage(AppState { app: core });
+            // the window (tauri.conf.json, "create": false), made here so a link in a
+            // description can't take it over: the web opens in the browser
+            let cfg = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("tauri.conf.json has no main window")?;
+            let (to_browser, to_browser2) = (app.handle().clone(), app.handle().clone());
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+                .on_navigation(move |url| {
+                    if in_app(url) {
+                        return true;
+                    }
+                    open_outside(&to_browser, url);
+                    false
+                })
+                .on_new_window(move |url, _features| {
+                    if !in_app(&url) {
+                        open_outside(&to_browser2, &url);
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
+                .build()?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![api, pick_folder, pick_file, reveal, open_path, open_url])
+        .run(tauri::generate_context!())
+        .expect("error while running Vid Sync");
+}
