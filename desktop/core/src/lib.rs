@@ -9,6 +9,7 @@ pub mod config;
 pub mod http;
 pub mod library;
 pub mod sources;
+pub mod textsearch;
 pub mod tools;
 pub mod util;
 pub mod ytdlp;

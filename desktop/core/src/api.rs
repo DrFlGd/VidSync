@@ -111,6 +111,9 @@ pub struct App {
     notifier: Mutex<Option<Notifier>>,
     /// The last cookies test: {"state": "testing"|"ok"|"failed", "message", "at"}.
     cookie_test: Arc<Mutex<Value>>,
+    /// Each kept video's subtitles and description, read on the first search:
+    /// "channel/id" -> (what it was read from, the text).
+    texts: Mutex<std::collections::HashMap<String, (String, Arc<crate::textsearch::Doc>)>>,
 }
 
 /// Shows a system notice: (title, text).
@@ -140,6 +143,7 @@ impl App {
             paused_until: Mutex::new(0),
             notifier: Mutex::new(None),
             cookie_test: Arc::new(Mutex::new(Value::Null)),
+            texts: Mutex::default(),
         });
         let path = app.config.lock().unwrap().library_path();
         app.open_library(path);
@@ -157,6 +161,7 @@ impl App {
         match Library::open(&path) {
             Ok(l) => {
                 capture::clean_partial(&l.partial_dir());
+                self.texts.lock().unwrap().clear();
                 *self.lib.lock().unwrap() = Some(l);
                 *self.lib_error.lock().unwrap() = None;
                 let mut c = self.config.lock().unwrap();
@@ -311,6 +316,7 @@ impl App {
                 Ok(json!({ "job": self.enqueue(JobKind::Tool { name: name.clone() }, format!("tool:{name}"), name, "you") }))
             }
             "videos" => self.videos(a["query"].as_str().unwrap_or("")),
+            "search_text" => self.search_text(a["query"].as_str().unwrap_or("")),
             "video" => self.video(a["channel"].as_str().context("no channel given")?, &vid()?),
             "sources" => self.sources(),
             "source" => self.source(&id()?),
@@ -729,6 +735,49 @@ impl App {
         })
     }
 
+    /// Videos whose subtitles or description hold a phrase: where it's said
+    /// (seconds and the line), how often, and a bit of the description.
+    fn search_text(&self, query: &str) -> Result<Value> {
+        let phrase = crate::textsearch::normalise(query);
+        if phrase.chars().count() < 3 {
+            return Ok(json!({ "query": query, "results": [], "videos_searched": 0 }));
+        }
+        self.with_lib(|l| {
+            let mut results = vec![];
+            let mut searched = 0;
+            let mut texts = self.texts.lock().unwrap();
+            for c in l.channels.values() {
+                let dir = l.channel_folder(&c.key()).join(VIDEOS_DIR);
+                for v in &c.videos {
+                    let key = format!("{}/{}", c.key(), v.id);
+                    let stamp = format!("{}|{}|{}", v.folder, v.downloaded, v.subtitles.join(","));
+                    let doc = match texts.get(&key) {
+                        Some((st, d)) if *st == stamp => d.clone(),
+                        _ => {
+                            let d = Arc::new(crate::textsearch::Doc::load(&dir.join(&v.folder), v));
+                            texts.insert(key, (stamp, d.clone()));
+                            d
+                        }
+                    };
+                    searched += 1;
+                    let (hits, count, snippet) = doc.find(&phrase, 5);
+                    if count > 0 || snippet.is_some() {
+                        let mut s = self.video_summary(l, c, v);
+                        s["hits"] = json!(hits);
+                        s["hit_count"] = json!(count);
+                        s["in_description"] = json!(snippet);
+                        results.push(s);
+                    }
+                }
+            }
+            // most said first, then newest
+            results.sort_by(|a, b| b["hit_count"].as_u64().cmp(&a["hit_count"].as_u64()).then_with(|| b["upload_date"].as_str().cmp(&a["upload_date"].as_str())));
+            let total = results.len();
+            results.truncate(100);
+            Ok(json!({ "query": query, "results": results, "total": total, "videos_searched": searched }))
+        })
+    }
+
     fn video(&self, key: &str, video: &str) -> Result<Value> {
         self.with_lib(|l| {
             let c = l.channels.get(key).context("That channel isn't in the library.")?;
@@ -745,6 +794,16 @@ impl App {
             s["vcodec"] = json!(if v.vcodec.is_empty() { info["vcodec"].as_str().unwrap_or("") } else { &v.vcodec });
             s["acodec"] = json!(if v.acodec.is_empty() { info["acodec"].as_str().unwrap_or("") } else { &v.acodec });
             s["format"] = json!(info["format"].as_str().unwrap_or(""));
+            // top comments, when they were saved (Follow → Comments)
+            s["comments"] = json!(info["comments"].as_array().map(|a| a.iter().filter(|c| c["parent"].as_str().unwrap_or("root") == "root").take(200).map(|c| json!({
+                "author": c["author"].as_str().unwrap_or(""),
+                "text": c["text"].as_str().unwrap_or(""),
+                "likes": c["like_count"].as_u64().unwrap_or(0),
+                "when": c["timestamp"].as_i64().map(crate::util::iso_from_unix),
+                "pinned": c["is_pinned"].as_bool().unwrap_or(false),
+                "by_uploader": c["author_is_uploader"].as_bool().unwrap_or(false),
+            })).collect::<Vec<_>>()));
+            s["comment_count"] = info["comment_count"].clone();
             s["chapters"] = json!(info["chapters"].as_array().map(|a| a.iter().map(|ch| json!({ "title": ch["title"], "start": ch["start_time"] })).collect::<Vec<_>>()).unwrap_or_default());
             s["path"] = json!(dir.display().to_string());
             s["web_url"] = json!(sources::video_url(video));

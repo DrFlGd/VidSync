@@ -266,7 +266,7 @@ impl YtDlp {
     /// picture and subtitles when asked. Progress goes to `progress`, the step to
     /// `stage`. A `.part` file left in `dest` by a try that was cut off is
     /// carried on from where it stopped.
-    pub fn download(&self, url: &str, dest: &Path, quality: Quality, subtitles: &str, progress: &Progress, stage: &Stage) -> Result<()> {
+    pub fn download(&self, url: &str, dest: &Path, quality: Quality, subtitles: &str, comments: bool, progress: &Progress, stage: &Stage) -> Result<()> {
         std::fs::create_dir_all(dest)?;
         let mut cmd = self.base();
         cmd.args(["--no-playlist", "--newline", "--progress", "--continue", "--retries", "3", "--fragment-retries", "5"]);
@@ -283,6 +283,10 @@ impl YtDlp {
         }
         if !subtitles.trim().is_empty() {
             cmd.args(["--write-subs", "--sub-langs", subtitles.trim()]);
+        }
+        if comments {
+            // the top 200, without replies, into the .info.json
+            cmd.args(["--write-comments", "--extractor-args", "youtube:max_comments=200,all,0;comment_sort=top"]);
         }
         cmd.args(self.format_args(quality));
         cmd.arg("-P").arg(dest);
@@ -304,6 +308,8 @@ impl YtDlp {
                 set_stage(stage, "Saving the picture");
             } else if line.starts_with("[download] Resuming download") {
                 set_stage(stage, "Carrying on where the last try stopped");
+            } else if line.contains("Downloading comment") {
+                set_stage(stage, "Saving the comments");
             } else if line.starts_with("[download] Sleeping") {
                 set_stage(stage, "Pausing between downloads");
             } else if line.starts_with("[download] Destination:") && !line.contains("Downloading") {

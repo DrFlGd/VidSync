@@ -34,6 +34,7 @@ export function FollowFields({ f, set, kind = "channel", schedule = true, ffmpeg
       <select id=${ids + "-subs"} value=${SUBS.some(([k]) => k === f.subtitles) ? f.subtitles : "custom"} onChange=${(e) => e.target.value !== "custom" && set({ subtitles: e.target.value })}>
         ${SUBS.map(([k, l]) => html`<option value=${k}>${l}</option>`)}
         ${!SUBS.some(([k]) => k === f.subtitles) && html`<option value="custom">${f.subtitles}</option>`}</select></label>
+    <label class="check"><input type="checkbox" id=${ids + "-comments"} checked=${!!f.comments} onChange=${(e) => set({ comments: e.target.checked })} /> Save the top comments with each video (up to 200)</label>
     ${kind === "channel" && html`<label class="field"><span>Keep</span>
       <select id=${ids + "-keep"} value=${String(f.keep_newest || 0)} onChange=${(e) => set({ keep_newest: Number(e.target.value) })}>
         ${KEEP.map(([v, l]) => html`<option value=${String(v)}>${l}</option>`)}
